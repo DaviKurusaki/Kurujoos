@@ -12,12 +12,13 @@
   isLoginsSectionUnlocked: false,
   adminPendingAction: null,
   authUser: null,
+  needsFirstSetup: false,
   fiscalUser: null,
   fiscalPreviewItems: [],
   fiscalNfs: [],
   fiscalNfItems: [],
   fiscalSelectionNf: null,
-  fiscalView: 'nfs',
+  fiscalView: 'menu',
   fiscalHistoryRows: [],
   fiscalConfirmMode: null,
   fiscalDeleteReason: '',
@@ -32,13 +33,37 @@
     freight: null,
     client: null,
     order: null
-  }
+  },
+  rhView: 'menu',
+  rhHeSubView: 'dashboard',
+  rhContext: null,
+  rhSetores: [],
+  rhColaboradores: [],
+  rhHorasExtras: [],
+  rhKpis: null,
+  rhUsers: [],
+  rhAudit: [],
+  rhPendingConfirm: null,
+  rhAtrasosKpis: null,
+  rhAtrasosRows: [],
+  rhSolicHeTab: 'form',
+  rhSolicHeRows: [],
+  rhSolicHeFilters: {},
+  rhImportWorkbookPath: ''
 };
 
 const MOLDAGEM_HIDDEN_COLUMNS = new Set(['BUCHA PRENSADAS', 'PESO UTILIZADO']);
 const MOLDAGEM_CENTER_COLUMNS = new Set(['COD', 'QTD', 'PC', 'REQ', 'CLIENTE']);
 const MOLDAGEM_STATUS_PRENSADO = 'PRENSADO';
 const MOLDAGEM_STATUS_ESTOQUE = 'BUCHA ESTOQUE';
+const RNC_SECTOR_COLOR_MAP = {
+  PCP: '#16a34a',
+  PROJETO: '#facc15',
+  USINAGEM: '#0ea5e9',
+  ACABAMENTO: '#f97316',
+  MOLDAGEM: '#1e40af',
+  FORNECEDOR: '#86efac'
+};
 const STANDARD_CENTER_COLUMNS = new Set(['LINHA', 'QTD', 'N PC', 'N REQ', 'CLIENTE', 'PROGRAMA', 'BUCHA', 'ENTREGA', 'OBS']);
 const MACHINE_LIST_TYPES = new Set(['fagor1', 'fagor2', 'mcs1', 'mcs2', 'mcs3']);
 const READY_OBS_VALUES = new Set(['PRONTO', 'PALOMA', 'DARCI', 'REBECA', 'GUSTAVO', 'GUSTAVO S']);
@@ -70,6 +95,87 @@ const CNC_MACHINE_COLOR_MAP = {
 };
 const SETTINGS_UNLOCK_PASSWORD = '0604';
 const FEATURE_LOG_GROUPS = [
+  {
+    version: '1.5.15',
+    title: 'Fiscal - Menu',
+    date: '18/02/2026',
+    items: [
+      'Fiscal: adicionado menu inicial (estilo RH) com atalho para abrir a listagem de NFs.',
+      'Fiscal: botao "Voltar ao menu" na tela de NFs.'
+    ]
+  },
+  {
+    version: '1.5.14',
+    title: 'RH - Lancamento Manual (HH:MM)',
+    date: '18/02/2026',
+    items: [
+      'RH: campo de duracao no lancamento manual agora aceita HH:MM (ex: 1:30) em H.E e Atrasos.',
+      'RH: exibicao de horas no RH padronizada para HH:MM.'
+    ]
+  },
+  {
+    version: '1.5.13',
+    title: 'Hotfix - RH Solicitacao H.E',
+    date: '18/02/2026',
+    items: [
+      'Hotfix: preload/Window API da aba Solicitacao H.E (corrige erro de funcao inexistente em algumas instalacoes).'
+    ]
+  },
+  {
+    version: '1.5.12',
+    title: 'RH - Solicitacao H.E (Compatibilidade)',
+    date: '18/02/2026',
+    items: [
+      'RH: mensagem amigavel quando a maquina estiver com versao antiga (evita erro "rhSolicHeList is not a function").',
+      'RH: orientacao para atualizar/reinstalar o Setup quando faltar API da aba Solicitação H.E.'
+    ]
+  },
+  {
+    version: '1.5.11',
+    title: 'RH - Solicitacao H.E (Layout + Total HH:MM)',
+    date: '18/02/2026',
+    items: [
+      'RH: Solicitacao de Horas Extras com layout mais limpo (campos alinhados e finalidade em largura total).',
+      'RH: campo Finalidade com tamanho fixo (sem redimensionar).',
+      'RH: Solicitante e Data da solicitacao automaticos (usuario logado + momento da geracao).',
+      'RH: Total de horas agora em formato HH:MM (ex: 1:30) na tela e na consulta.',
+      'PDF: Total de horas tambem em formato HH:MM.'
+    ]
+  },
+  {
+    version: '1.5.10',
+    title: 'RH (Atrasos) + Importacao Melhorada + Atalho de Config no Login',
+    date: '18/02/2026',
+    items: [
+      'Login: botao "Configuracao" e "Caminho Fiscal" direto na tela de acesso para facilitar o primeiro setup.',
+      'Login: aviso mais claro quando o Banco Pedidos nao for encontrado (orienta configurar Caminho Fiscal R:).',
+      'RH: nova sub-aba "Dashboard atrasos" com KPIs por setor/colaborador e evolucao mensal.',
+      'RH: importacao agora traz H.E (S2) e Atrasos (R2) automaticamente por aba/colaborador.',
+      'RH: modal "Lancar H.E" agora permite escolher entre lancar H.E ou Atraso no mesmo lugar.',
+      'RH: validacao anti-duplicidade (atualiza registro existente por colaborador/data/tipo para evitar duplicados).'
+    ]
+  },
+  {
+    version: '1.5.9',
+    title: 'RNC Completo + Rastreio SEDEX + Ajustes de Moldagem',
+    date: '16/02/2026',
+    items: [
+      'Novo Relatorio RNC no Dashboard (pagina dedicada) com KPIs: Qntd RNC, Custo RNC, Custo medio, Tempo perdido, Setor com mais RNC, Setor com maior custo e Maior motivo.',
+      'RNC: leitura direta do banco (Relatorio de Nao Conformidade BANCO DE DADOS.xlsm) usando Caminho Fiscal (R:) e aba RNC, tolerante a planilha aberta no Excel.',
+      'RNC: calculo por data no formato pt-BR (ex: 12/02/26) e suporte a Segs Perdidos como HH:MM:SS ou estimativa 55s * Qntd quando vazio/zero.',
+      'Graficos RNC: pizza % por setor com cores fixas, barras por setor, por motivo (quantidade e custo), tempo perdido por maquina (somente USINAGEM) e quantidade por material.',
+      'Usinagem CNC: novos KPIs com Pecas Refugadas (RNC/USINAGEM) e Tempo Perdido (RNC/USINAGEM) e reorganizacao dos KPIs em 2 linhas.',
+      'CNC: Percentual de contribuicao ajustado para ocupar metade da largura, liberando o lado para Custo apurado por maquina (RNC/USINAGEM).',
+      'Moldagem: Buchas por Prensa e OP por Prensa corrigidos (apenas Prensa 1/2/3), lendo pela Tabela9 (cabecalho na linha 15) e consolidando resultados.',
+      'Moldagem: KPI "OPs por Material" renomeado para "Ops Prensadas" na pagina de processamento.',
+      'Dashboard PCP: caminho da planilha diaria atualizado para estrutura por Ano/Mes dentro de PROGRAMAÇÃO DE PRODUÇÃO-DIARIA.',
+      'FISCAL: consulta de rastreio SEDEX com validacao do codigo e exibicao de status/destino via API (SeuRastreio).',
+      'Configuracao: campo para salvar chave da API de rastreio e uso no botao Consultar dentro do FISCAL.',
+      'RH: nova aba com ferramenta Gestao de Horas Extras (H.E) com filtros, dashboard, lancamentos e exportacao (Excel/PDF).',
+      'RH: permissoes separadas em Configuracao (Logins) -> RH (visualizar) e RH Editar (lancar/editar/apagar + configuracoes).',
+      'RH: KPIs por colaborador/setor e margem por faixas (25h=50%, 40h=60%, 60h=80%, acima=100%).'
+    ]
+  },
   {
     version: '1.5.8',
     title: 'Dashboard PCP 2.0 - PDF Profissional, Moldagem 2 e CNC Avancado',
@@ -247,16 +353,34 @@ const FEATURE_LOG_GROUPS = [
   }
 ];
 
+function ensureRhSolicHeApiAvailable() {
+  const api = window.api || {};
+  const required = [
+    'rhSolicHeUpsert',
+    'rhSolicHeList',
+    'rhSolicHeDelete',
+    'rhSolicHePdfRegen',
+    'rhSolicHePdfOpen'
+  ];
+  const missing = required.filter((key) => typeof api[key] !== 'function');
+  if (!missing.length) {
+    return;
+  }
+  throw new Error('A aba "Solicitação de H.E" precisa da versão mais nova do app. Atualize/reinstale o Setup (>= 1.5.13).');
+}
+
 const elements = {
   body: document.body,
   tabMain: document.getElementById('tab-main'),
   tabPcp: document.getElementById('tab-pcp'),
   tabFiscal: document.getElementById('tab-fiscal'),
+  tabRh: document.getElementById('tab-rh'),
   tabSettings: document.getElementById('tab-settings'),
   tabLog: document.getElementById('tab-log'),
   panelMain: document.getElementById('panel-main'),
   panelPcp: document.getElementById('panel-pcp'),
   panelFiscal: document.getElementById('panel-fiscal'),
+  panelRh: document.getElementById('panel-rh'),
   panelSettings: document.getElementById('panel-settings'),
   panelLog: document.getElementById('panel-log'),
   brandLogo: document.getElementById('brand-logo'),
@@ -265,6 +389,7 @@ const elements = {
   btnSelectFolder: document.getElementById('btn-select-folder'),
   fiscalRootInput: document.getElementById('fiscal-root-input'),
   btnSelectFiscalRoot: document.getElementById('btn-select-fiscal-root'),
+  trackingApiKeyInput: document.getElementById('tracking-api-key-input'),
   btnSaveSettings: document.getElementById('btn-save-settings'),
   btnUnlockLogins: document.getElementById('btn-unlock-logins'),
   loginsLockedNote: document.getElementById('logins-locked-note'),
@@ -321,6 +446,11 @@ const elements = {
   pcpCncEmpty: document.getElementById('pcp-cnc-empty'),
   pcpCncOverview: document.getElementById('pcp-cnc-overview'),
   pcpCncCharts: document.getElementById('pcp-cnc-charts'),
+  pcpRncSection: document.getElementById('pcp-rnc-section'),
+  pcpRncTitle: document.getElementById('pcp-rnc-title'),
+  pcpRncEmpty: document.getElementById('pcp-rnc-empty'),
+  pcpRncOverview: document.getElementById('pcp-rnc-overview'),
+  pcpRncCharts: document.getElementById('pcp-rnc-charts'),
   pcpEffRefresh: document.getElementById('pcp-eff-refresh'),
   pcpEffExport: document.getElementById('pcp-eff-export'),
   pcpEffDate: document.getElementById('pcp-eff-date'),
@@ -343,7 +473,13 @@ const elements = {
   appLoginUsername: document.getElementById('app-login-username'),
   appLoginPassword: document.getElementById('app-login-password'),
   appLoginError: document.getElementById('app-login-error'),
+  appLoginConfig: document.getElementById('app-login-config'),
+  appLoginFiscalRoot: document.getElementById('app-login-fiscal-root'),
   appLoginConfirm: document.getElementById('app-login-confirm'),
+  fiscalMenuView: document.getElementById('fiscal-menu-view'),
+  fiscalNfsView: document.getElementById('fiscal-nfs-view'),
+  fiscalOpenNfs: document.getElementById('fiscal-open-nfs'),
+  fiscalBackMenu: document.getElementById('fiscal-back-menu'),
   fiscalSubtitle: document.getElementById('fiscal-subtitle'),
   fiscalBtnCadastrarNf: document.getElementById('fiscal-btn-cadastrar-nf'),
   fiscalBtnPesquisarNf: document.getElementById('fiscal-btn-pesquisar-nf'),
@@ -355,6 +491,9 @@ const elements = {
   fiscalBtnVoltar: document.getElementById('fiscal-btn-voltar'),
   fiscalBtnEditarNf: document.getElementById('fiscal-btn-editar-nf'),
   fiscalBtnApagarNf: document.getElementById('fiscal-btn-apagar-nf'),
+  fiscalTrackingCode: document.getElementById('fiscal-tracking-code'),
+  fiscalTrackingCheck: document.getElementById('fiscal-tracking-check'),
+  fiscalTrackingResult: document.getElementById('fiscal-tracking-result'),
   fiscalBreadcrumb: document.getElementById('fiscal-breadcrumb'),
   fiscalNfModal: document.getElementById('fiscal-nf-modal'),
   fiscalNfBackdrop: document.getElementById('fiscal-nf-backdrop'),
@@ -397,6 +536,126 @@ const elements = {
   fiscalDeleteError: document.getElementById('fiscal-delete-error'),
   fiscalDeleteCancel: document.getElementById('fiscal-delete-cancel'),
   fiscalDeleteConfirm: document.getElementById('fiscal-delete-confirm'),
+  rhMenuView: document.getElementById('rh-menu-view'),
+  rhOpenHe: document.getElementById('rh-open-he'),
+  rhOpenSolicHe: document.getElementById('rh-open-solic-he'),
+  rhHeView: document.getElementById('rh-he-view'),
+  rhSolicHeView: document.getElementById('rh-solic-he-view'),
+  rhHeBackMenu: document.getElementById('rh-he-back-menu'),
+  rhHeRefresh: document.getElementById('rh-he-refresh'),
+  rhHeAdd: document.getElementById('rh-he-add'),
+  rhHeImport: document.getElementById('rh-he-import'),
+  rhHeExportExcel: document.getElementById('rh-he-export-excel'),
+  rhHeExportPdf: document.getElementById('rh-he-export-pdf'),
+  rhSolicHeBackMenu: document.getElementById('rh-solic-he-back-menu'),
+  rhSolicHeRefresh: document.getElementById('rh-solic-he-refresh'),
+  rhSolicHeNew: document.getElementById('rh-solic-he-new'),
+  rhSolicHeTabForm: document.getElementById('rh-solic-he-tab-form'),
+  rhSolicHeTabConsulta: document.getElementById('rh-solic-he-tab-consulta'),
+  rhSolicHeViewForm: document.getElementById('rh-solic-he-view-form'),
+  rhSolicHeViewConsulta: document.getElementById('rh-solic-he-view-consulta'),
+  rhSolicHeId: document.getElementById('rh-solic-he-id'),
+  rhSolicHeNumero: document.getElementById('rh-solic-he-numero'),
+  rhSolicHeDataHe: document.getElementById('rh-solic-he-datahe'),
+  rhSolicHeColab: document.getElementById('rh-solic-he-colab'),
+  rhSolicHeSetor: document.getElementById('rh-solic-he-setor'),
+  rhSolicHeFinalidade: document.getElementById('rh-solic-he-finalidade'),
+  rhSolicHeInicio: document.getElementById('rh-solic-he-inicio'),
+  rhSolicHeFim: document.getElementById('rh-solic-he-fim'),
+  rhSolicHeTotal: document.getElementById('rh-solic-he-total'),
+  rhSolicHeSolicitante: document.getElementById('rh-solic-he-solicitante'),
+  rhSolicHeDataSolic: document.getElementById('rh-solic-he-datasolic'),
+  rhSolicHeError: document.getElementById('rh-solic-he-error'),
+  rhSolicHeCancel: document.getElementById('rh-solic-he-cancel'),
+  rhSolicHeSave: document.getElementById('rh-solic-he-save'),
+  rhSolicHeFilterColab: document.getElementById('rh-solic-he-filter-colab'),
+  rhSolicHeFilterSetor: document.getElementById('rh-solic-he-filter-setor'),
+  rhSolicHeFilterIni: document.getElementById('rh-solic-he-filter-ini'),
+  rhSolicHeFilterFim: document.getElementById('rh-solic-he-filter-fim'),
+  rhSolicHeFilterSolicitante: document.getElementById('rh-solic-he-filter-solicitante'),
+  rhSolicHeFilterDoc: document.getElementById('rh-solic-he-filter-doc'),
+  rhSolicHeFilterClear: document.getElementById('rh-solic-he-filter-clear'),
+  rhSolicHeFilterApply: document.getElementById('rh-solic-he-filter-apply'),
+  rhSolicHeConsultaError: document.getElementById('rh-solic-he-consulta-error'),
+  rhSolicHeConsultaEmpty: document.getElementById('rh-solic-he-consulta-empty'),
+  rhSolicHeTable: document.getElementById('rh-solic-he-table'),
+  rhSolicHeTableHead: document.getElementById('rh-solic-he-table-head'),
+  rhSolicHeTableBody: document.getElementById('rh-solic-he-table-body'),
+  rhFilterMonth: document.getElementById('rh-filter-month'),
+  rhFilterSector: document.getElementById('rh-filter-sector'),
+  rhFilterCollab: document.getElementById('rh-filter-collab'),
+  rhFilterType: document.getElementById('rh-filter-type'),
+  rhSubtabDashboard: document.getElementById('rh-subtab-dashboard'),
+  rhSubtabAtrasos: document.getElementById('rh-subtab-atrasos'),
+  rhSubtabRegistros: document.getElementById('rh-subtab-registros'),
+  rhSubtabColaboradores: document.getElementById('rh-subtab-colaboradores'),
+  rhSubtabSetores: document.getElementById('rh-subtab-setores'),
+  rhSubtabConfig: document.getElementById('rh-subtab-config'),
+  rhSubtabAudit: document.getElementById('rh-subtab-audit'),
+  rhViewDashboard: document.getElementById('rh-view-dashboard'),
+  rhViewAtrasos: document.getElementById('rh-view-atrasos'),
+  rhViewRegistros: document.getElementById('rh-view-registros'),
+  rhViewColaboradores: document.getElementById('rh-view-colaboradores'),
+  rhViewSetores: document.getElementById('rh-view-setores'),
+  rhViewConfig: document.getElementById('rh-view-config'),
+  rhViewAudit: document.getElementById('rh-view-audit'),
+  rhSectorModal: document.getElementById('rh-sector-modal'),
+  rhSectorBackdrop: document.getElementById('rh-sector-backdrop'),
+  rhSectorId: document.getElementById('rh-sector-id'),
+  rhSectorNome: document.getElementById('rh-sector-nome'),
+  rhSectorGestor: document.getElementById('rh-sector-gestor'),
+  rhSectorCc: document.getElementById('rh-sector-cc'),
+  rhSectorError: document.getElementById('rh-sector-error'),
+  rhSectorCancel: document.getElementById('rh-sector-cancel'),
+  rhSectorConfirm: document.getElementById('rh-sector-confirm'),
+  rhCollabModal: document.getElementById('rh-collab-modal'),
+  rhCollabBackdrop: document.getElementById('rh-collab-backdrop'),
+  rhCollabId: document.getElementById('rh-collab-id'),
+  rhCollabNome: document.getElementById('rh-collab-nome'),
+  rhCollabMatricula: document.getElementById('rh-collab-matricula'),
+  rhCollabSetor: document.getElementById('rh-collab-setor'),
+  rhCollabCargo: document.getElementById('rh-collab-cargo'),
+  rhCollabAdmissao: document.getElementById('rh-collab-admissao'),
+  rhCollabStatus: document.getElementById('rh-collab-status'),
+  rhCollabLimite: document.getElementById('rh-collab-limite'),
+  rhCollabError: document.getElementById('rh-collab-error'),
+  rhCollabCancel: document.getElementById('rh-collab-cancel'),
+  rhCollabConfirm: document.getElementById('rh-collab-confirm'),
+  rhHeModal: document.getElementById('rh-he-modal'),
+  rhHeBackdrop: document.getElementById('rh-he-backdrop'),
+  rhHeTitle: document.getElementById('rh-he-title'),
+  rhHeModalSubtitle: document.getElementById('rh-he-modal-subtitle'),
+  rhHeId: document.getElementById('rh-he-id'),
+  rhHeKind: document.getElementById('rh-he-kind'),
+  rhHeColaborador: document.getElementById('rh-he-colaborador'),
+  rhHeData: document.getElementById('rh-he-data'),
+  rhHeQtdLabel: document.getElementById('rh-he-qtd-label'),
+  rhHeQtd: document.getElementById('rh-he-qtd'),
+  rhHeTipoField: document.getElementById('rh-he-tipo-field'),
+  rhHeTipo: document.getElementById('rh-he-tipo'),
+  rhHeObs: document.getElementById('rh-he-obs'),
+  rhHeJustField: document.getElementById('rh-he-just-field'),
+  rhHeJust: document.getElementById('rh-he-just'),
+  rhHeError: document.getElementById('rh-he-error'),
+  rhHeCancel: document.getElementById('rh-he-cancel'),
+  rhHeConfirm: document.getElementById('rh-he-confirm'),
+  rhConfirmModal: document.getElementById('rh-confirm-modal'),
+  rhConfirmBackdrop: document.getElementById('rh-confirm-backdrop'),
+  rhConfirmMessage: document.getElementById('rh-confirm-message'),
+  rhConfirmError: document.getElementById('rh-confirm-error'),
+  rhConfirmCancel: document.getElementById('rh-confirm-cancel'),
+  rhConfirmOk: document.getElementById('rh-confirm-ok'),
+  rhImportModal: document.getElementById('rh-import-modal'),
+  rhImportBackdrop: document.getElementById('rh-import-backdrop'),
+  rhImportSource: document.getElementById('rh-import-source'),
+  rhImportDate: document.getElementById('rh-import-date'),
+  rhImportFile: document.getElementById('rh-import-file'),
+  rhImportFilePicker: document.getElementById('rh-import-file-picker'),
+  rhImportFilePath: document.getElementById('rh-import-file-path'),
+  rhImportFilePick: document.getElementById('rh-import-file-pick'),
+  rhImportError: document.getElementById('rh-import-error'),
+  rhImportCancel: document.getElementById('rh-import-cancel'),
+  rhImportConfirm: document.getElementById('rh-import-confirm'),
   userModal: document.getElementById('user-modal'),
   userModalBackdrop: document.getElementById('user-modal-backdrop'),
   userUsername: document.getElementById('user-username'),
@@ -431,7 +690,7 @@ function getManagedAreas() {
 }
 
 function getAreaDefaultPermission(areaKey) {
-  return areaKey === 'fiscal' ? false : true;
+  return areaKey === 'fiscal' || areaKey === 'rh' || areaKey === 'rh_edit' ? false : true;
 }
 
 function getPermissionValue(permissions, areaKey) {
@@ -494,6 +753,41 @@ function renderUserPermissionsEditor(permissionsSeed = {}) {
     item.appendChild(label);
     elements.userPermissionsWrap.appendChild(item);
   });
+
+  // Permissão extra (não é uma aba): permite editar/excluir no RH.
+  if (managedAreas.some((area) => area.key === 'rh')) {
+    const item = document.createElement('div');
+    item.className = 'user-permission-item';
+
+    const textWrap = document.createElement('div');
+    textWrap.className = 'user-permission-text';
+    const strong = document.createElement('strong');
+    strong.textContent = 'RH - Permissão de edição';
+    const subtitle = document.createElement('span');
+    subtitle.textContent = 'Permite lançar, editar e excluir registros de Horas Extras.';
+    textWrap.appendChild(strong);
+    textWrap.appendChild(subtitle);
+
+    const inputId = 'user-can-rh-edit';
+    const label = document.createElement('label');
+    label.className = 'switch-control switch-sm';
+    label.setAttribute('for', inputId);
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = inputId;
+    input.setAttribute('data-user-permission-key', 'rh_edit');
+    input.checked = !!(permissionsSeed && permissionsSeed.rh_edit);
+
+    const slider = document.createElement('span');
+    slider.className = 'switch-slider';
+
+    label.appendChild(input);
+    label.appendChild(slider);
+    item.appendChild(textWrap);
+    item.appendChild(label);
+    elements.userPermissionsWrap.appendChild(item);
+  }
 }
 
 function normalizeColumnName(value) {
@@ -779,7 +1073,13 @@ function setUsersHeaders() {
   if (!elements.usersTableHead) {
     return;
   }
-  const dynamicCols = getManagedAreas().map((area) => area.label);
+  const dynamicCols = [];
+  getManagedAreas().forEach((area) => {
+    dynamicCols.push(area.label);
+    if (area.key === 'rh') {
+      dynamicCols.push('RH Editar');
+    }
+  });
   setTableHeaders(elements.usersTableHead, ['Usuário', ...dynamicCols, 'Ações']);
 }
 
@@ -863,7 +1163,7 @@ function renderUsersTable() {
     userTd.textContent = user.username;
     tr.appendChild(userTd);
 
-    managedAreas.forEach((area) => {
+    const renderPermissionToggleCell = (permKey, checkedValue) => {
       const areaTd = document.createElement('td');
       areaTd.className = 'users-perm-cell';
 
@@ -873,14 +1173,24 @@ function renderUsersTable() {
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'users-table-checkbox';
-      checkbox.checked = getPermissionValue(user.permissions || {}, area.key);
+      checkbox.checked = !!checkedValue;
       checkbox.addEventListener('change', async () => {
         const nextValue = checkbox.checked;
         checkbox.checked = !nextValue;
         await requireAdminSettings(async () => {
           try {
             const nextPermissions = { ...(user.permissions || {}) };
-            nextPermissions[area.key] = nextValue;
+            nextPermissions[permKey] = nextValue;
+
+            // Mantém consistência: não faz sentido editar RH sem poder abrir RH.
+            if (permKey === 'rh_edit' && nextValue) {
+              nextPermissions.rh = true;
+            }
+            // Se tirar RH, tira também a edição.
+            if (permKey === 'rh' && !nextValue) {
+              nextPermissions.rh_edit = false;
+            }
+
             await window.api.updateUser({
               username: user.username,
               permissions: nextPermissions,
@@ -902,7 +1212,14 @@ function renderUsersTable() {
       toggleLabel.appendChild(checkbox);
       toggleLabel.appendChild(slider);
       areaTd.appendChild(toggleLabel);
-      tr.appendChild(areaTd);
+      return areaTd;
+    };
+
+    managedAreas.forEach((area) => {
+      tr.appendChild(renderPermissionToggleCell(area.key, getPermissionValue(user.permissions || {}, area.key)));
+      if (area.key === 'rh') {
+        tr.appendChild(renderPermissionToggleCell('rh_edit', getPermissionValue(user.permissions || {}, 'rh_edit')));
+      }
     });
 
     const actionsTd = document.createElement('td');
@@ -936,6 +1253,7 @@ function switchTab(next) {
     main: { tab: elements.tabMain, panel: elements.panelMain },
     pcp: { tab: elements.tabPcp, panel: elements.panelPcp },
     fiscal: { tab: elements.tabFiscal, panel: elements.panelFiscal },
+    rh: { tab: elements.tabRh, panel: elements.panelRh },
     settings: { tab: elements.tabSettings, panel: elements.panelSettings },
     log: { tab: elements.tabLog, panel: elements.panelLog }
   };
@@ -1519,6 +1837,17 @@ function renderFiscalHistory() {
 
 function renderFiscalScreen() {
   if (!elements.panelFiscal) {
+    return;
+  }
+
+  const isMenu = state.fiscalView === 'menu';
+  if (elements.fiscalMenuView) {
+    elements.fiscalMenuView.hidden = !isMenu;
+  }
+  if (elements.fiscalNfsView) {
+    elements.fiscalNfsView.hidden = isMenu;
+  }
+  if (isMenu) {
     return;
   }
 
@@ -2577,6 +2906,19 @@ function formatKg(value) {
   return `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(Number(value || 0))} Kg`;
 }
 
+function formatDurationFromSeconds(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(Number(totalSeconds || 0)));
+  if (!seconds) {
+    return '0m';
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours <= 0) {
+    return `${minutes}m`;
+  }
+  return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+}
+
 function formatDecimalMax3(value) {
   return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(Number(value || 0));
 }
@@ -3094,6 +3436,89 @@ function createCncContributionChart(data) {
   return wrap;
 }
 
+function createRncSectorPieChart(data) {
+  const wrap = document.createElement('article');
+  wrap.className = 'pcp-dashboard-chart-card pcp-cnc-pie-card';
+  const h4 = document.createElement('h4');
+  h4.textContent = 'RNC por Setor (%)';
+  wrap.appendChild(h4);
+
+  const safe = (data || []).map((item, idx) => {
+    const sectorName = String(item.sector || item.name || '').trim().toUpperCase() || `SETOR ${idx + 1}`;
+    return {
+      sector: sectorName,
+      count: Number(item.count || 0),
+      pct: Number(item.pct || 0),
+      color: RNC_SECTOR_COLOR_MAP[normalizeForFilter(sectorName)] || ['#2563eb', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444'][idx % 5]
+    };
+  });
+
+  let start = 0;
+  const slices = [];
+  const stops = safe.map((item) => {
+    const sliceStart = start;
+    const end = start + item.pct;
+    const piece = `${item.color} ${start}% ${end}%`;
+    slices.push({ ...item, start: sliceStart, end, mid: sliceStart + (item.pct / 2) });
+    start = end;
+    return piece;
+  });
+
+  const pie = document.createElement('div');
+  pie.className = 'pcp-cnc-pie';
+  pie.style.background = stops.length
+    ? `conic-gradient(${stops.join(', ')})`
+    : 'conic-gradient(#cbd5e1 0% 100%)';
+
+  slices
+    .filter((slice) => Number(slice.pct || 0) >= 6)
+    .forEach((slice) => {
+      const angle = ((slice.mid / 100) * (Math.PI * 2)) - (Math.PI / 2);
+      const radius = 34;
+      const x = 50 + (Math.cos(angle) * radius);
+      const y = 50 + (Math.sin(angle) * radius);
+      const label = document.createElement('span');
+      label.className = 'pcp-cnc-pie-slice-label';
+      label.textContent = formatPercent(slice.pct);
+      label.style.left = `${x}%`;
+      label.style.top = `${y}%`;
+      pie.appendChild(label);
+    });
+
+  slices
+    .filter((slice) => Number(slice.pct || 0) > 0 && Number(slice.pct || 0) < 6)
+    .forEach((slice) => {
+      const angle = ((slice.mid / 100) * (Math.PI * 2)) - (Math.PI / 2);
+      const radius = 58;
+      const x = 50 + (Math.cos(angle) * radius);
+      const y = 50 + (Math.sin(angle) * radius);
+      const callout = document.createElement('span');
+      callout.className = 'pcp-cnc-pie-slice-callout';
+      callout.textContent = formatPercent(slice.pct);
+      callout.style.left = `${x}%`;
+      callout.style.top = `${y}%`;
+      pie.appendChild(callout);
+    });
+
+  wrap.appendChild(pie);
+
+  const legend = document.createElement('div');
+  legend.className = 'pcp-cnc-pie-legend';
+  safe.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'pcp-cnc-pie-legend-row';
+    const dot = document.createElement('i');
+    dot.style.background = item.color;
+    const text = document.createElement('span');
+    text.textContent = `${item.sector}: ${formatPercent(item.pct)} (${formatInteger(item.count)})`;
+    row.appendChild(dot);
+    row.appendChild(text);
+    legend.appendChild(row);
+  });
+  wrap.appendChild(legend);
+  return wrap;
+}
+
 function renderPcpDashboard() {
   if (!elements.pcpDashboardOverview || !elements.pcpDashboardCharts || !elements.pcpDashboardEmpty || !elements.pcpDashboardTitle) {
     return;
@@ -3122,6 +3547,15 @@ function renderPcpDashboard() {
   if (elements.pcpCncEmpty) {
     elements.pcpCncEmpty.style.display = 'none';
   }
+  if (elements.pcpRncOverview) {
+    elements.pcpRncOverview.innerHTML = '';
+  }
+  if (elements.pcpRncCharts) {
+    elements.pcpRncCharts.innerHTML = '';
+  }
+  if (elements.pcpRncEmpty) {
+    elements.pcpRncEmpty.style.display = 'none';
+  }
 
   const dateValue = ensurePcpDashboardDateValue();
   if (!state.pcpDashboardSnapshot) {
@@ -3135,6 +3569,10 @@ function renderPcpDashboard() {
     if (elements.pcpCncEmpty) {
       elements.pcpCncEmpty.style.display = 'block';
       elements.pcpCncEmpty.textContent = 'Clique em Atualizar dados para gerar o painel de usinagem CNC.';
+    }
+    if (elements.pcpRncEmpty) {
+      elements.pcpRncEmpty.style.display = 'block';
+      elements.pcpRncEmpty.textContent = 'Sem dados de RNC para a data selecionada.';
     }
     return;
   }
@@ -3167,6 +3605,35 @@ function renderPcpDashboard() {
   elements.pcpDashboardOverview.appendChild(kpiRow1);
   elements.pcpDashboardOverview.appendChild(kpiRow2);
   elements.pcpDashboardOverview.appendChild(kpiRow3);
+
+  if ((Number(k.rncQtd || 0) <= 0) && (Number(k.rncCost || 0) <= 0)) {
+    const rncSnapshot = snapshot && snapshot.debug ? snapshot.debug.rnc : null;
+    const rncDebug = rncSnapshot && rncSnapshot.debug ? rncSnapshot.debug : null;
+    if (rncDebug) {
+      const note = document.createElement('p');
+      note.className = 'field-note';
+      const err = rncDebug.error || '';
+      const file = rncDebug.sourceFile || '';
+      const sheet = rncDebug.sheetName || '';
+      const expected = rncDebug.expected || '';
+      const fiscalRoot = rncDebug.fiscalRoot || '';
+      const rootOk = rncDebug.fiscalRootExists === true ? 'OK' : 'NOK';
+      const expectedOk = rncDebug.expectedExists === true ? 'OK' : 'NOK';
+      const headerIndex = Number.isFinite(rncDebug.headerIndex) ? ` | headerIndex: ${rncDebug.headerIndex + 1}` : '';
+      const runtime = snapshot && snapshot.debug ? snapshot.debug.runtime : null;
+      const runtimeInfo = runtime && (runtime.mainFile || runtime.appVersion)
+        ? ` | main: ${runtime.mainFile || '-'} | ver: ${runtime.appVersion || '-'}`
+        : '';
+
+      note.textContent = err
+        ? `RNC: sem dados (${err})`
+        : `RNC: sem dados (arquivo: ${file || '-'} | aba: ${sheet || '-'}${headerIndex} | root: ${fiscalRoot || '-'} (${rootOk}) | esperado: ${expected || '-'} (${expectedOk})${runtimeInfo})`;
+      if (err) {
+        note.classList.add('error');
+      }
+      elements.pcpDashboardOverview.appendChild(note);
+    }
+  }
 
   const operatorColorMap = {
     GUSTAVO: '#16a34a',
@@ -3215,6 +3682,7 @@ function renderPcpDashboard() {
 
   renderPcpMoldagem();
   renderPcpCnc();
+  renderPcpRnc();
 }
 
 function renderPcpMoldagem() {
@@ -3342,7 +3810,7 @@ function renderPcpMoldagem() {
 
   const moldagemPage2KpiRow = document.createElement('div');
   moldagemPage2KpiRow.className = 'pcp-dashboard-kpi-row cols-4 pcp-moldagem-page2-kpis';
-  moldagemPage2KpiRow.appendChild(createDashboardKpiCard('OPs por Material', formatInteger(totalOpsMaterial)));
+  moldagemPage2KpiRow.appendChild(createDashboardKpiCard('Ops Prensadas', formatInteger(totalOpsMaterial)));
   moldagemPage2KpiRow.appendChild(createDashboardKpiCard('Média KG por OP', formatKg(avgKgPerOp)));
   moldagemPage2KpiRow.appendChild(createDashboardKpiCard('Média Buchas por OP', formatDecimalMax3(avgBuchasPerOp)));
   moldagemPage2KpiRow.appendChild(createDashboardKpiCard('Índice de Refugo', formatPercent(indiceRefugo)));
@@ -3417,6 +3885,88 @@ function renderPcpMoldagem() {
   elements.pcpMoldagemCharts.appendChild(operatorsRow);
 }
 
+function renderPcpRnc() {
+  if (!elements.pcpRncOverview || !elements.pcpRncCharts || !elements.pcpRncEmpty || !elements.pcpRncTitle) {
+    return;
+  }
+  if (state.pcpView !== 'dashboard') {
+    return;
+  }
+
+  elements.pcpRncOverview.innerHTML = '';
+  elements.pcpRncCharts.innerHTML = '';
+
+  const dateValue = ensurePcpDashboardDateValue();
+  elements.pcpRncTitle.textContent = `RELATÓRIO RNC - ${formatWeekdayAndDatePtBr(dateValue)}`;
+
+  const snapshot = state.pcpDashboardSnapshot;
+  const report = snapshot && snapshot.charts ? snapshot.charts.rncReport : null;
+  const k = report && report.kpis ? report.kpis : {};
+  const charts = report && report.charts ? report.charts : {};
+  const totalRnc = Number(k.rncQtd || 0);
+
+  if (!totalRnc) {
+    elements.pcpRncEmpty.style.display = 'block';
+    elements.pcpRncEmpty.textContent = 'Sem dados de RNC para a data selecionada.';
+    return;
+  }
+
+  elements.pcpRncEmpty.style.display = 'none';
+  elements.pcpRncOverview.appendChild(createDashboardPdfSectionHeader('RELATÓRIO RNC', dateValue, true));
+
+  const kpiRow1 = document.createElement('div');
+  kpiRow1.className = 'pcp-dashboard-kpi-row cols-4';
+  kpiRow1.appendChild(createDashboardKpiCard('Qntd RNC', formatInteger(k.rncQtd || 0)));
+  kpiRow1.appendChild(createDashboardKpiCard('Custo RNC', formatCurrencyBr(k.rncCost || 0)));
+  kpiRow1.appendChild(createDashboardKpiCard('Custo médio RNC', formatCurrencyBr(k.avgCost || 0)));
+  kpiRow1.appendChild(createDashboardKpiCard('Tempo perdido', formatDurationFromSeconds(k.segsPerdidos || 0)));
+
+  const kpiRow2 = document.createElement('div');
+  kpiRow2.className = 'pcp-dashboard-kpi-row cols-3';
+  kpiRow2.appendChild(createDashboardKpiCard('Setor com mais RNC', String(k.topSectorByCount || '-')));
+  kpiRow2.appendChild(createDashboardKpiCard('Setor com maior custo', String(k.topSectorByCost || '-')));
+  kpiRow2.appendChild(createDashboardKpiCard('Maior motivo', String(k.topReason || '-')));
+
+  elements.pcpRncOverview.appendChild(kpiRow1);
+  elements.pcpRncOverview.appendChild(kpiRow2);
+
+  elements.pcpRncCharts.appendChild(createRncSectorPieChart(charts.sectorPie || []));
+  elements.pcpRncCharts.appendChild(createDashboardBarChart({
+    title: 'Quantidade de RNC por Setor',
+    data: charts.sectorCounts || [],
+    colorResolver: (item) => RNC_SECTOR_COLOR_MAP[normalizeForFilter(item && item.name)] || '#64748b',
+    valueFormatter: (v) => formatInteger(v)
+  }));
+  elements.pcpRncCharts.appendChild(createDashboardBarChart({
+    title: 'Quantidade de RNC por Motivo',
+    data: charts.reasonsCount || [],
+    colorResolver: () => '#ef4444',
+    valueFormatter: (v) => formatInteger(v),
+    labelMaxLen: 36
+  }));
+  elements.pcpRncCharts.appendChild(createDashboardBarChart({
+    title: 'Custo por Motivo',
+    data: charts.reasonsCost || [],
+    colorResolver: () => '#22c55e',
+    valueFormatter: (v) => formatCurrencyBr(v),
+    labelMaxLen: 36
+  }));
+  elements.pcpRncCharts.appendChild(createDashboardBarChart({
+    title: 'Tempo perdido por Máquina',
+    data: charts.machineTime || [],
+    colorResolver: () => '#f59e0b',
+    valueFormatter: (v) => formatDurationFromSeconds(v),
+    labelMaxLen: 26
+  }));
+  elements.pcpRncCharts.appendChild(createDashboardBarChart({
+    title: 'Quantidade de RNC por Material',
+    data: charts.materialsCount || [],
+    colorResolver: () => '#0ea5e9',
+    valueFormatter: (v) => formatInteger(v),
+    labelMaxLen: 26
+  }));
+}
+
 function renderPcpCnc() {
   if (!elements.pcpCncOverview || !elements.pcpCncCharts || !elements.pcpCncEmpty || !elements.pcpCncTitle) {
     return;
@@ -3432,6 +3982,9 @@ function renderPcpCnc() {
   const snapshot = state.pcpDashboardSnapshot;
   const cnc = snapshot && snapshot.charts ? snapshot.charts.cnc : null;
   const machines = Array.isArray(cnc) ? cnc : [];
+  const rncUsinagem = snapshot && snapshot.charts ? snapshot.charts.rncUsinagem : null;
+  const rncMachines = (rncUsinagem && Array.isArray(rncUsinagem.machines)) ? rncUsinagem.machines : [];
+  const rncTotals = (rncUsinagem && rncUsinagem.totals && typeof rncUsinagem.totals === 'object') ? rncUsinagem.totals : {};
   if (!machines.length) {
     elements.pcpCncEmpty.style.display = 'block';
     elements.pcpCncEmpty.textContent = 'Sem dados de usinagem por máquina para a data selecionada.';
@@ -3461,9 +4014,11 @@ function renderPcpCnc() {
   );
 
   const kpiRowExec = document.createElement('div');
-  kpiRowExec.className = 'pcp-dashboard-kpi-row cols-2';
+  kpiRowExec.className = 'pcp-dashboard-kpi-row cols-4';
   kpiRowExec.appendChild(createDashboardKpiCard('Gap de Peças (Planejadas - Produzidas)', formatInteger(gapPecas)));
   kpiRowExec.appendChild(createDashboardKpiCard('Gap de OPs (Planejadas - Produzidas)', formatInteger(gapOps)));
+  kpiRowExec.appendChild(createDashboardKpiCard('Peças Refugadas (RNC/USINAGEM)', formatInteger(rncTotals.piecesRefugadas || 0)));
+  kpiRowExec.appendChild(createDashboardKpiCard('Tempo Perdido (RNC/USINAGEM)', formatDurationFromSeconds(rncTotals.segsPerdidos || 0)));
   elements.pcpCncOverview.appendChild(kpiRowExec);
 
   const mainRow = document.createElement('div');
@@ -3486,9 +4041,37 @@ function renderPcpCnc() {
   }));
   elements.pcpCncCharts.appendChild(mainRow);
 
-  elements.pcpCncCharts.appendChild(createDashboardPlaceholderChart('RNC por máquinas', 'Em breve.'));
-  elements.pcpCncCharts.appendChild(createDashboardPlaceholderChart('Tempo perdido por máquina', 'Em breve.'));
-  elements.pcpCncCharts.appendChild(createCncContributionChart(machines));
+  if (!rncMachines.length) {
+    elements.pcpCncCharts.appendChild(createDashboardPlaceholderChart('RNC por máquina (USINAGEM)', 'Sem dados de RNC para a data selecionada.'));
+    elements.pcpCncCharts.appendChild(createDashboardPlaceholderChart('Tempo perdido por máquina (USINAGEM)', 'Sem dados de RNC para a data selecionada.'));
+  } else {
+    elements.pcpCncCharts.appendChild(createDashboardBarChart({
+      title: 'RNC por máquina (USINAGEM)',
+      data: rncMachines.map((item) => ({ name: item.machine, value: item.rnc || 0 })),
+      colorResolver: () => '#ef4444',
+      valueFormatter: (v) => formatInteger(v)
+    }));
+
+    elements.pcpCncCharts.appendChild(createDashboardBarChart({
+      title: 'Tempo perdido por máquina (USINAGEM)',
+      data: rncMachines.map((item) => ({ name: item.machine, value: item.segs || 0 })),
+      colorResolver: () => '#f59e0b',
+      valueFormatter: (v) => formatDurationFromSeconds(v)
+    }));
+  }
+
+  const bottomRow = document.createElement('div');
+  bottomRow.className = 'pcp-cnc-bottom-row';
+  bottomRow.appendChild(createCncContributionChart(machines));
+  bottomRow.appendChild(rncMachines.length
+    ? createDashboardBarChart({
+      title: 'Custo apurado por máquina (RNC/USINAGEM)',
+      data: rncMachines.map((item) => ({ name: item.machine, value: item.cost || 0 })),
+      colorResolver: () => '#22c55e',
+      valueFormatter: (v) => formatCurrencyBr(v)
+    })
+    : createDashboardPlaceholderChart('Custo apurado por máquina (RNC/USINAGEM)', 'Sem dados de RNC para a data selecionada.'));
+  elements.pcpCncCharts.appendChild(bottomRow);
 }
 
 async function loadPcpMoldagemSnapshot() {
@@ -3616,6 +4199,10 @@ async function handleAppLoginConfirm() {
     if (elements.appLoginError) {
       elements.appLoginError.textContent = (result && result.error) || 'Credenciais inválidas.';
     }
+    const errText = String((result && result.error) || '').toLowerCase();
+    if (errText.includes('banco pedidos nao encontrado')) {
+      showToast('Banco Pedidos não encontrado. Configure o Caminho Fiscal (R:) em Configuração.', true);
+    }
     elements.appLoginPassword?.focus?.();
     elements.appLoginPassword?.select?.();
     return;
@@ -3637,6 +4224,12 @@ async function handleAppLoginConfirm() {
   closeAppLoginModal();
   switchTab('main');
   showToast(`Bem-vindo, ${result.username}.`);
+}
+
+function handleAppLoginOpenSettings() {
+  closeAppLoginModal();
+  switchTab('settings');
+  elements.btnSelectFiscalRoot?.focus?.();
 }
 
 function requestPcpAccess() {
@@ -3662,8 +4255,1184 @@ async function requestFiscalAccess() {
   }
   state.fiscalSelectionNf = null;
   state.fiscalNfItems = [];
-  state.fiscalView = 'nfs';
+  state.fiscalView = 'menu';
   renderFiscalScreen();
+}
+
+function canEditRh() {
+  const perms = getAuthPermissions();
+  return !!(perms && Object.prototype.hasOwnProperty.call(perms, 'rh_edit') ? perms.rh_edit : false);
+}
+
+function setRhView(next) {
+  state.rhView = next;
+  if (elements.rhMenuView) {
+    elements.rhMenuView.hidden = next !== 'menu';
+  }
+  if (elements.rhHeView) {
+    elements.rhHeView.hidden = next !== 'he';
+  }
+  if (elements.rhSolicHeView) {
+    elements.rhSolicHeView.hidden = next !== 'solic_he';
+  }
+}
+
+function setRhHeSubView(next) {
+  state.rhHeSubView = next;
+  const views = {
+    dashboard: elements.rhViewDashboard,
+    atrasos: elements.rhViewAtrasos,
+    registros: elements.rhViewRegistros,
+    colaboradores: elements.rhViewColaboradores,
+    setores: elements.rhViewSetores,
+    config: elements.rhViewConfig,
+    audit: elements.rhViewAudit
+  };
+  const tabs = {
+    dashboard: elements.rhSubtabDashboard,
+    atrasos: elements.rhSubtabAtrasos,
+    registros: elements.rhSubtabRegistros,
+    colaboradores: elements.rhSubtabColaboradores,
+    setores: elements.rhSubtabSetores,
+    config: elements.rhSubtabConfig,
+    audit: elements.rhSubtabAudit
+  };
+  Object.entries(views).forEach(([key, el]) => {
+    if (el) {
+      el.hidden = key !== next;
+    }
+  });
+  Object.entries(tabs).forEach(([key, el]) => {
+    el?.classList.toggle('active', key === next);
+  });
+}
+
+function requestRhAccess() {
+  if (!canAccessArea('rh')) {
+    showToast('Usuário sem permissão para acessar RH.', true);
+    return;
+  }
+  setRhView('menu');
+  setRhHeSubView('dashboard');
+  switchTab('rh');
+}
+
+function getAuthUsername() {
+  return String(state.authUser?.username || '').trim();
+}
+
+function getCurrentMonthValue() {
+  const now = new Date();
+  const yyyy = String(now.getFullYear()).padStart(4, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
+function ensureRhMonthValue() {
+  if (!elements.rhFilterMonth) {
+    return getCurrentMonthValue();
+  }
+  if (elements.rhFilterMonth.value) {
+    return elements.rhFilterMonth.value;
+  }
+  const value = getCurrentMonthValue();
+  elements.rhFilterMonth.value = value;
+  return value;
+}
+
+function getRhUiFilters() {
+  return {
+    month: ensureRhMonthValue(),
+    setorId: String(elements.rhFilterSector?.value || '').trim(),
+    colaboradorId: String(elements.rhFilterCollab?.value || '').trim(),
+    tipoHora: String(elements.rhFilterType?.value || '').trim()
+  };
+}
+
+function setRhSelectOptions(selectEl, options, { includeAll = true, allLabel = 'Todos' } = {}) {
+  if (!selectEl) {
+    return;
+  }
+  selectEl.innerHTML = '';
+  if (includeAll) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = allLabel;
+    selectEl.appendChild(opt);
+  }
+  (options || []).forEach((item) => {
+    const opt = document.createElement('option');
+    opt.value = String(item.value ?? '');
+    opt.textContent = String(item.label ?? '');
+    selectEl.appendChild(opt);
+  });
+}
+
+function getSetorLabelById(id) {
+  const safeId = String(id || '').trim();
+  const setor = (state.rhSetores || []).find((s) => String(s.id) === safeId);
+  return setor ? String(setor.nome_setor || setor.nome || '').trim() : '';
+}
+
+function canUseRhModule() {
+  const ctx = state.rhContext || null;
+  return !!(ctx && ctx.ok);
+}
+
+async function loadRhContext() {
+  const username = getAuthUsername();
+  if (!username) {
+    throw new Error('Usuário logado não identificado.');
+  }
+  const ctx = await window.api.rhGetContext({ username });
+  state.rhContext = ctx || null;
+  if (!ctx || !ctx.ok) {
+    const err = (ctx && ctx.error) || 'Seu usuário não está configurado para RH.';
+    throw new Error(err);
+  }
+  return ctx;
+}
+
+async function loadRhBaseLists() {
+  const username = getAuthUsername();
+  state.rhSetores = (await window.api.rhListSetores({ username }))?.setores || [];
+  state.rhColaboradores = (await window.api.rhListColaboradores({ username }))?.colaboradores || [];
+}
+
+function refreshRhFilterOptions(selected = {}) {
+  const setores = (state.rhSetores || []).map((s) => ({
+    value: s.id,
+    label: s.nome_setor || s.nome || `Setor ${s.id}`
+  }));
+  setRhSelectOptions(elements.rhFilterSector, setores, { includeAll: true, allLabel: 'Todos os setores' });
+  if (elements.rhFilterSector && selected && selected.setorId != null) {
+    elements.rhFilterSector.value = String(selected.setorId || '').trim();
+  }
+
+  const collabs = (state.rhColaboradores || []).map((c) => ({
+    value: c.id,
+    label: `${c.nome || 'Colaborador'}${c.setor_id ? ` • ${getSetorLabelById(c.setor_id)}` : ''}`
+  }));
+  setRhSelectOptions(elements.rhFilterCollab, collabs, { includeAll: true, allLabel: 'Todos os colaboradores' });
+  if (elements.rhFilterCollab && selected && selected.colaboradorId != null) {
+    elements.rhFilterCollab.value = String(selected.colaboradorId || '').trim();
+  }
+}
+
+function openRhModal(modalEl) {
+  if (modalEl) {
+    modalEl.hidden = false;
+  }
+}
+
+function closeRhModal(modalEl) {
+  if (modalEl) {
+    modalEl.hidden = true;
+  }
+}
+
+function confirmRhAction(message, onConfirm) {
+  if (!elements.rhConfirmModal) {
+    return;
+  }
+  state.rhPendingConfirm = typeof onConfirm === 'function' ? onConfirm : null;
+  if (elements.rhConfirmError) {
+    elements.rhConfirmError.textContent = '';
+  }
+  if (elements.rhConfirmMessage) {
+    elements.rhConfirmMessage.textContent = String(message || 'Confirme para continuar.');
+  }
+  openRhModal(elements.rhConfirmModal);
+}
+
+function formatHours(value) {
+  const hours = Number(value || 0);
+  const totalMinutes = Math.round(Math.abs(hours) * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  const sign = hours < 0 ? '-' : '';
+  return `${sign}${h}:${String(m).padStart(2, '0')}`;
+}
+
+function parseDurationTextToHours(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const normalized = raw.replace(',', '.').replace(/\s+/g, '');
+  const matchHm = normalized.match(/^(\d{1,3}):(\d{1,2})$/);
+  if (matchHm) {
+    const h = Number(matchHm[1]);
+    const m = Number(matchHm[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || m < 0 || m > 59) {
+      return null;
+    }
+    return h + (m / 60);
+  }
+
+  const matchDec = normalized.match(/^\d{1,3}(\.\d+)?$/);
+  if (matchDec) {
+    const dec = Number(normalized);
+    if (!Number.isFinite(dec) || dec < 0) {
+      return null;
+    }
+    return dec;
+  }
+
+  return null;
+}
+
+function renderRhDashboard() {
+  if (!elements.rhViewDashboard) {
+    return;
+  }
+  elements.rhViewDashboard.innerHTML = '';
+
+  if (!canUseRhModule()) {
+    const p = document.createElement('p');
+    p.className = 'pcp-empty-state';
+    p.textContent = 'Seu usuário não está configurado no RH.';
+    elements.rhViewDashboard.appendChild(p);
+    return;
+  }
+
+  const kpis = state.rhKpis || null;
+  if (!kpis) {
+    const p = document.createElement('p');
+    p.className = 'pcp-empty-state';
+    p.textContent = 'Clique em Atualizar para carregar indicadores.';
+    elements.rhViewDashboard.appendChild(p);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'rh-grid-2';
+
+  const cards = [
+    {
+      title: 'Total de H.E no mês',
+      value: formatHours(kpis.totalHoras || 0),
+      sub: (kpis.comparacao && kpis.comparacao.prevMonth)
+        ? `Vs ${kpis.comparacao.prevMonth}: ${kpis.comparacao.diff >= 0 ? '+' : ''}${formatHours(kpis.comparacao.diff || 0)} (${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(kpis.comparacao.pct || 0))}%)`
+        : ''
+    },
+    {
+      title: 'Média diária (dias úteis)',
+      value: formatHours(kpis.mediaDiaria || 0),
+      sub: `${formatInteger(kpis.diasTrabalhadosNoMes || 0)} dia(s) útil(eis) | ${formatInteger(kpis.diasComLancamento || 0)} com lançamento`
+    },
+    { title: 'Colaboradores no período', value: formatInteger(kpis.colaboradoresNoPeriodo || 0), sub: `${formatInteger(kpis.totalRegistros || 0)} lançamento(s)` },
+    {
+      title: 'Alertas de limite',
+      value: formatInteger((kpis.alertas || []).length),
+      sub: kpis.limiteTexto || ''
+    },
+    {
+      title: 'Margem média (ponderada)',
+      value: `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(kpis.margemMediaPonderada || 0))}%`,
+      sub: 'Faixa por total mensal'
+    }
+  ];
+
+  cards.forEach((card) => {
+    const el = document.createElement('div');
+    el.className = 'rh-kpi-card';
+    const title = document.createElement('p');
+    title.className = 'rh-kpi-title';
+    title.textContent = card.title;
+    const value = document.createElement('p');
+    value.className = 'rh-kpi-value';
+    value.textContent = card.value;
+    const sub = document.createElement('p');
+    sub.className = 'rh-kpi-sub';
+    sub.textContent = card.sub;
+    el.appendChild(title);
+    el.appendChild(value);
+    el.appendChild(sub);
+    grid.appendChild(el);
+  });
+  elements.rhViewDashboard.appendChild(grid);
+
+  const sections = document.createElement('div');
+  sections.className = 'rh-grid-2';
+
+  const buildBarSection = (titleText, rows, labelKey) => {
+    const card = document.createElement('div');
+    card.className = 'rh-kpi-card';
+    const t = document.createElement('p');
+    t.className = 'rh-kpi-title';
+    t.textContent = titleText;
+    card.appendChild(t);
+    const list = document.createElement('div');
+    list.className = 'rh-barlist';
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const max = Math.max(1, ...safeRows.map((r) => Number(r.horas || 0)));
+    safeRows.slice(0, 10).forEach((row) => {
+      const line = document.createElement('div');
+      line.className = 'rh-barrow';
+      const label = document.createElement('div');
+      label.className = 'rh-barlabel';
+      const baseLabel = String(row[labelKey] || '—');
+      if (labelKey === 'colaborador' && row.margem_percent != null) {
+        const pct = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(Number(row.margem_percent || 0));
+        label.textContent = `${baseLabel} (${pct}%)`;
+      } else {
+        label.textContent = baseLabel;
+      }
+      const track = document.createElement('div');
+      track.className = 'rh-bartrack';
+      const fill = document.createElement('div');
+      fill.className = 'rh-barfill';
+      fill.style.width = `${Math.max(0, Math.min(100, (Number(row.horas || 0) / max) * 100))}%`;
+      track.appendChild(fill);
+      const value = document.createElement('div');
+      value.className = 'rh-barvalue';
+      value.textContent = formatHours(row.horas || 0);
+      line.appendChild(label);
+      line.appendChild(track);
+      line.appendChild(value);
+      list.appendChild(line);
+    });
+    if (!safeRows.length) {
+      const empty = document.createElement('p');
+      empty.className = 'pcp-empty-state';
+      empty.textContent = 'Sem lançamentos no período.';
+      list.appendChild(empty);
+    }
+    card.appendChild(list);
+    return card;
+  };
+
+  sections.appendChild(buildBarSection('H.E por setor', kpis.porSetor || [], 'setor'));
+  sections.appendChild(buildBarSection('Ranking de colaboradores', kpis.rankingColaboradores || [], 'colaborador'));
+  elements.rhViewDashboard.appendChild(sections);
+
+  const evo = Array.isArray(kpis.evolucaoMensal) ? kpis.evolucaoMensal : [];
+  if (evo.length) {
+    const evoCard = buildBarSection('Evolução mensal (últimos 6 meses)', evo.map((r) => ({
+      month: r.month,
+      horas: r.totalHoras
+    })), 'month');
+    elements.rhViewDashboard.appendChild(evoCard);
+  }
+}
+
+function renderRhRegistros() {
+  if (!elements.rhViewRegistros) {
+    return;
+  }
+  elements.rhViewRegistros.innerHTML = '';
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'table-wrapper pcp-table-wrapper';
+  const table = document.createElement('table');
+  table.className = 'pcp-table';
+  const thead = document.createElement('thead');
+  const tbody = document.createElement('tbody');
+  thead.innerHTML = '<tr><th>Data</th><th>Colaborador</th><th>Setor</th><th>Horas</th><th>Tipo</th><th>Observação</th><th>Criado por</th><th>Ações</th></tr>';
+
+  const collabById = new Map((state.rhColaboradores || []).map((c) => [String(c.id), c]));
+  const rows = state.rhHorasExtras || [];
+  rows.forEach((r) => {
+    const tr = document.createElement('tr');
+    const collab = collabById.get(String(r.colaborador_id)) || null;
+    const tdData = document.createElement('td');
+    tdData.textContent = formatYmdToBr(String(r.data || '').trim());
+    const tdColab = document.createElement('td');
+    tdColab.textContent = collab ? String(collab.nome || '').trim() : '—';
+    const tdSetor = document.createElement('td');
+    tdSetor.textContent = collab ? (getSetorLabelById(collab.setor_id) || '—') : '—';
+    const tdHoras = document.createElement('td');
+    tdHoras.textContent = formatHours(r.quantidade_horas || 0);
+    const tdTipo = document.createElement('td');
+    tdTipo.textContent = String(r.tipo_hora || '').trim();
+    const tdObs = document.createElement('td');
+    tdObs.textContent = String(r.observacao || '').trim();
+    const tdUser = document.createElement('td');
+    tdUser.textContent = String(r.criado_por || '').trim();
+    const tdAcoes = document.createElement('td');
+    if (canEditRh()) {
+      const edit = document.createElement('button');
+      edit.className = 'btn secondary';
+      edit.type = 'button';
+      edit.textContent = 'Editar';
+      edit.addEventListener('click', () => openRhHeModal(r));
+      const del = document.createElement('button');
+      del.className = 'btn danger';
+      del.type = 'button';
+      del.style.marginLeft = '8px';
+      del.textContent = 'Apagar';
+      del.addEventListener('click', () => confirmRhAction('Apagar este lançamento de H.E?', async () => {
+        await window.api.rhDeleteHoraExtra({ username: getAuthUsername(), id: r.id });
+        await refreshRhAll();
+        setRhHeSubView('registros');
+      }));
+      tdAcoes.appendChild(edit);
+      tdAcoes.appendChild(del);
+    } else {
+      tdAcoes.textContent = '—';
+    }
+
+    tr.appendChild(tdData);
+    tr.appendChild(tdColab);
+    tr.appendChild(tdSetor);
+    tr.appendChild(tdHoras);
+    tr.appendChild(tdTipo);
+    tr.appendChild(tdObs);
+    tr.appendChild(tdUser);
+    tr.appendChild(tdAcoes);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  elements.rhViewRegistros.appendChild(tableWrap);
+
+  if (!rows.length) {
+    const p = document.createElement('p');
+    p.className = 'pcp-empty-state';
+    p.textContent = 'Sem lançamentos no período.';
+    elements.rhViewRegistros.appendChild(p);
+  }
+}
+
+function renderRhAtrasosDashboard() {
+  if (!elements.rhViewAtrasos) {
+    return;
+  }
+  elements.rhViewAtrasos.innerHTML = '';
+
+  if (!canUseRhModule()) {
+    const p = document.createElement('p');
+    p.className = 'pcp-empty-state';
+    p.textContent = 'Seu usuário não está configurado no RH.';
+    elements.rhViewAtrasos.appendChild(p);
+    return;
+  }
+
+  const kpis = state.rhAtrasosKpis || null;
+  if (!kpis) {
+    const p = document.createElement('p');
+    p.className = 'pcp-empty-state';
+    p.textContent = 'Clique em Atualizar para carregar indicadores.';
+    elements.rhViewAtrasos.appendChild(p);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'rh-grid-2';
+
+  const cards = [
+    {
+      title: 'Total de atrasos no mês',
+      value: formatHours(kpis.totalHoras || 0),
+      sub: (kpis.comparacao && kpis.comparacao.prevMonth)
+        ? `Vs ${kpis.comparacao.prevMonth}: ${kpis.comparacao.diff >= 0 ? '+' : ''}${formatHours(kpis.comparacao.diff || 0)} (${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(kpis.comparacao.pct || 0))}%)`
+        : ''
+    },
+    {
+      title: 'Média diária (dias úteis)',
+      value: formatHours(kpis.mediaDiaria || 0),
+      sub: `${formatInteger(kpis.diasTrabalhadosNoMes || 0)} dia(s) útil(eis) | ${formatInteger(kpis.diasComLancamento || 0)} com atraso`
+    },
+    {
+      title: 'Colaboradores com atraso',
+      value: formatInteger(kpis.colaboradoresNoPeriodo || 0),
+      sub: `${formatInteger(kpis.totalRegistros || 0)} registro(s)`
+    }
+  ];
+
+  cards.forEach((card) => {
+    const el = document.createElement('div');
+    el.className = 'rh-kpi-card';
+    const title = document.createElement('p');
+    title.className = 'rh-kpi-title';
+    title.textContent = card.title;
+    const value = document.createElement('p');
+    value.className = 'rh-kpi-value';
+    value.textContent = card.value;
+    const sub = document.createElement('p');
+    sub.className = 'rh-kpi-sub';
+    sub.textContent = card.sub;
+    el.appendChild(title);
+    el.appendChild(value);
+    el.appendChild(sub);
+    grid.appendChild(el);
+  });
+  elements.rhViewAtrasos.appendChild(grid);
+
+  const sections = document.createElement('div');
+  sections.className = 'rh-grid-2';
+
+  const buildBarSection = (titleText, rows, labelKey) => {
+    const card = document.createElement('div');
+    card.className = 'rh-kpi-card';
+    const t = document.createElement('p');
+    t.className = 'rh-kpi-title';
+    t.textContent = titleText;
+    card.appendChild(t);
+    const list = document.createElement('div');
+    list.className = 'rh-barlist';
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const max = Math.max(1, ...safeRows.map((r) => Number(r.horas || 0)));
+    safeRows.slice(0, 10).forEach((row) => {
+      const line = document.createElement('div');
+      line.className = 'rh-barrow';
+      const label = document.createElement('div');
+      label.className = 'rh-barlabel';
+      label.textContent = String(row[labelKey] || '—');
+      const track = document.createElement('div');
+      track.className = 'rh-bartrack';
+      const fill = document.createElement('div');
+      fill.className = 'rh-barfill';
+      fill.style.width = `${Math.max(0, Math.min(100, (Number(row.horas || 0) / max) * 100))}%`;
+      track.appendChild(fill);
+      const value = document.createElement('div');
+      value.className = 'rh-barvalue';
+      value.textContent = formatHours(row.horas || 0);
+      line.appendChild(label);
+      line.appendChild(track);
+      line.appendChild(value);
+      list.appendChild(line);
+    });
+    if (!safeRows.length) {
+      const empty = document.createElement('p');
+      empty.className = 'pcp-empty-state';
+      empty.textContent = 'Sem atrasos no período.';
+      list.appendChild(empty);
+    }
+    card.appendChild(list);
+    return card;
+  };
+
+  sections.appendChild(buildBarSection('Atrasos por setor', kpis.porSetor || [], 'setor'));
+  sections.appendChild(buildBarSection('Ranking de colaboradores', kpis.rankingColaboradores || [], 'colaborador'));
+  elements.rhViewAtrasos.appendChild(sections);
+
+  const evo = Array.isArray(kpis.evolucaoMensal) ? kpis.evolucaoMensal : [];
+  if (evo.length) {
+    const evoCard = buildBarSection('Evolução mensal (últimos 6 meses)', evo.map((r) => ({
+      month: r.month,
+      horas: r.totalHoras
+    })), 'month');
+    elements.rhViewAtrasos.appendChild(evoCard);
+  }
+}
+
+async function refreshRhAll() {
+  const prevFilters = getRhUiFilters();
+  await loadRhContext();
+  await loadRhBaseLists();
+  refreshRhFilterOptions(prevFilters);
+  if (elements.rhFilterMonth && prevFilters.month) {
+    elements.rhFilterMonth.value = prevFilters.month;
+  }
+  if (elements.rhFilterType) {
+    elements.rhFilterType.value = String(prevFilters.tipoHora || '').trim();
+  }
+  const username = getAuthUsername();
+  const filters = getRhUiFilters();
+  state.rhKpis = (await window.api.rhGetKpis({ username, ...filters }))?.kpis || null;
+  state.rhHorasExtras = (await window.api.rhListHorasExtras({ username, ...filters }))?.rows || [];
+  state.rhAtrasosKpis = (await window.api.rhGetAtrasosKpis({ username, month: filters.month, setorId: filters.setorId, colaboradorId: filters.colaboradorId }))?.kpis || null;
+  state.rhAtrasosRows = (await window.api.rhListAtrasos({ username, month: filters.month, setorId: filters.setorId, colaboradorId: filters.colaboradorId }))?.rows || [];
+  renderRhDashboard();
+  renderRhAtrasosDashboard();
+  renderRhRegistros();
+  renderRhColaboradores();
+  renderRhSetores();
+  if (state.rhHeSubView === 'config') {
+    await renderRhConfig();
+  }
+  if (state.rhHeSubView === 'audit') {
+    await renderRhAudit();
+  }
+}
+
+function openRhSectorModal(seed) {
+  if (!elements.rhSectorModal) {
+    return;
+  }
+  if (elements.rhSectorError) {
+    elements.rhSectorError.textContent = '';
+  }
+  if (elements.rhSectorId) {
+    elements.rhSectorId.value = seed && seed.id ? String(seed.id) : '';
+  }
+  if (elements.rhSectorNome) {
+    elements.rhSectorNome.value = seed ? String(seed.nome_setor || '') : '';
+  }
+  if (elements.rhSectorGestor) {
+    elements.rhSectorGestor.value = seed ? String(seed.gestor_responsavel || '') : '';
+  }
+  if (elements.rhSectorCc) {
+    elements.rhSectorCc.value = seed ? String(seed.centro_custo || '') : '';
+  }
+  openRhModal(elements.rhSectorModal);
+  elements.rhSectorNome?.focus?.();
+}
+
+function closeRhSectorModal() {
+  closeRhModal(elements.rhSectorModal);
+}
+
+function openRhCollabModal(seed) {
+  if (!elements.rhCollabModal) {
+    return;
+  }
+  if (elements.rhCollabError) {
+    elements.rhCollabError.textContent = '';
+  }
+  if (elements.rhCollabId) {
+    elements.rhCollabId.value = seed && seed.id ? String(seed.id) : '';
+  }
+  if (elements.rhCollabNome) {
+    elements.rhCollabNome.value = seed ? String(seed.nome || '') : '';
+  }
+  if (elements.rhCollabMatricula) {
+    elements.rhCollabMatricula.value = seed ? String(seed.matricula || '') : '';
+  }
+  if (elements.rhCollabSetor) {
+    setRhSelectOptions(
+      elements.rhCollabSetor,
+      (state.rhSetores || []).map((s) => ({ value: s.id, label: s.nome_setor })),
+      { includeAll: true, allLabel: 'Selecione' }
+    );
+    elements.rhCollabSetor.value = seed && seed.setor_id ? String(seed.setor_id) : '';
+  }
+  if (elements.rhCollabCargo) {
+    elements.rhCollabCargo.value = seed ? String(seed.cargo || '') : '';
+  }
+  if (elements.rhCollabAdmissao) {
+    elements.rhCollabAdmissao.value = seed ? String(seed.data_admissao || '') : '';
+  }
+  if (elements.rhCollabStatus) {
+    elements.rhCollabStatus.value = seed ? String(seed.status || 'ativo') : 'ativo';
+  }
+  if (elements.rhCollabLimite) {
+    const raw = seed ? String(seed.limite_mensal || '').trim() : '';
+    elements.rhCollabLimite.value = raw;
+  }
+  openRhModal(elements.rhCollabModal);
+  elements.rhCollabNome?.focus?.();
+}
+
+function closeRhCollabModal() {
+  closeRhModal(elements.rhCollabModal);
+}
+
+function openRhHeModal(seed) {
+  if (!elements.rhHeModal) {
+    return;
+  }
+  if (elements.rhHeError) {
+    elements.rhHeError.textContent = '';
+  }
+  if (elements.rhHeId) {
+    elements.rhHeId.value = seed && seed.id ? String(seed.id) : '';
+  }
+  setRhHeModalKind('he', { lock: !!(seed && seed.id) });
+  if (elements.rhHeColaborador) {
+    const active = (state.rhColaboradores || []).filter((c) => String(c.status || '').trim() !== 'inativo');
+    setRhSelectOptions(
+      elements.rhHeColaborador,
+      active.map((c) => ({ value: c.id, label: c.nome })),
+      { includeAll: false }
+    );
+    elements.rhHeColaborador.value = seed && seed.colaborador_id
+      ? String(seed.colaborador_id)
+      : String(active[0]?.id || '');
+  }
+  if (elements.rhHeData) {
+    elements.rhHeData.value = seed && seed.data ? String(seed.data) : getTodayYmdLocal();
+  }
+  if (elements.rhHeQtd) {
+    elements.rhHeQtd.value = seed && seed.quantidade_horas !== undefined ? formatHours(seed.quantidade_horas) : '';
+  }
+  if (elements.rhHeTipo) {
+    elements.rhHeTipo.value = seed ? String(seed.tipo_hora || '50%') : '50%';
+  }
+  if (elements.rhHeObs) {
+    elements.rhHeObs.value = seed ? String(seed.observacao || '') : '';
+  }
+  if (elements.rhHeJust) {
+    elements.rhHeJust.value = seed ? String(seed.justificativa || '') : '';
+  }
+  openRhModal(elements.rhHeModal);
+  elements.rhHeQtd?.focus?.();
+}
+
+function closeRhHeModal() {
+  closeRhModal(elements.rhHeModal);
+}
+
+function setRhHeModalKind(nextKind, { lock = false } = {}) {
+  const kind = String(nextKind || '').trim() === 'atraso' ? 'atraso' : 'he';
+
+  if (elements.rhHeKind) {
+    elements.rhHeKind.value = kind;
+    elements.rhHeKind.disabled = !!lock;
+  }
+
+  const isAtraso = kind === 'atraso';
+  if (elements.rhHeTipoField) {
+    elements.rhHeTipoField.hidden = isAtraso;
+  }
+  if (elements.rhHeJustField) {
+    elements.rhHeJustField.hidden = isAtraso;
+  }
+  if (elements.rhHeQtdLabel) {
+    elements.rhHeQtdLabel.textContent = isAtraso ? 'Tempo de atraso (hh:mm)' : 'Quantidade de horas (hh:mm)';
+  }
+  if (elements.rhHeTitle) {
+    elements.rhHeTitle.textContent = isAtraso ? 'Lançamento de Atrasos' : 'Lançamento de Horas Extras';
+  }
+  if (elements.rhHeModalSubtitle) {
+    elements.rhHeModalSubtitle.textContent = isAtraso
+      ? 'Registre atrasos diários por colaborador.'
+      : 'Registre horas extras diárias por colaborador.';
+  }
+
+  if (elements.rhHeQtd) {
+    elements.rhHeQtd.placeholder = 'Ex: 1:30';
+  }
+}
+
+function setRhImportWorkbookPath(nextPath) {
+  const safePath = String(nextPath || '').trim();
+  state.rhImportWorkbookPath = safePath;
+
+  if (elements.rhImportFilePath) {
+    const fileName = safePath ? safePath.split(/[/\\\\]/).filter(Boolean).slice(-1)[0] : '';
+    elements.rhImportFilePath.value = fileName;
+    elements.rhImportFilePath.title = safePath;
+  }
+
+  if (elements.rhImportConfirm) {
+    elements.rhImportConfirm.disabled = !safePath;
+  }
+}
+
+function openRhImportModal() {
+  if (!elements.rhImportModal) {
+    return;
+  }
+  if (elements.rhImportError) {
+    elements.rhImportError.textContent = '';
+  }
+  if (elements.rhImportSource) {
+    elements.rhImportSource.value = 'ponto_interno';
+  }
+  if (elements.rhImportDate) {
+    elements.rhImportDate.value = getTodayYmdLocal();
+  }
+  if (elements.rhImportFile) {
+    elements.rhImportFile.value = '';
+  }
+  setRhImportWorkbookPath('');
+  openRhModal(elements.rhImportModal);
+}
+
+function closeRhImportModal() {
+  closeRhModal(elements.rhImportModal);
+}
+
+async function handleRhImportConfirm() {
+  try {
+    const username = getAuthUsername();
+    if (!username) {
+      throw new Error('Usuário não autenticado.');
+    }
+    if (!canEditRh()) {
+      throw new Error('Somente RH (edição) pode importar.');
+    }
+
+    const source = String(elements.rhImportSource?.value || '').trim();
+    if (source !== 'ponto_interno') {
+      throw new Error('Importação de Ponto cartão ainda não disponível.');
+    }
+
+    const date = String(elements.rhImportDate?.value || '').trim();
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error('Informe a data do lançamento.');
+    }
+
+    const fallbackFilePath = elements.rhImportFile?.files?.[0]?.path ? String(elements.rhImportFile.files[0].path) : '';
+    const filePath = String(state.rhImportWorkbookPath || '').trim() || fallbackFilePath;
+    if (!filePath) {
+      throw new Error('Selecione a planilha base.');
+    }
+
+    if (elements.rhImportConfirm) {
+      elements.rhImportConfirm.disabled = true;
+    }
+    if (elements.rhImportError) {
+      elements.rhImportError.textContent = '';
+    }
+
+    const result = await window.api.rhImportInterno({ username, date, workbookPath: filePath });
+    const imported = Number(result?.imported || 0);
+    const updated = Number(result?.updated || 0);
+    const unmatched = Number(result?.unmatched || 0);
+    const skipped = Number(result?.skipped || 0);
+    const importedAtrasos = Number(result?.importedAtrasos || 0);
+    const updatedAtrasos = Number(result?.updatedAtrasos || 0);
+    const unmatchedAtrasos = Number(result?.unmatchedAtrasos || 0);
+    const skippedAtrasos = Number(result?.skippedAtrasos || 0);
+
+    showToast(`H.E — Importado: ${imported} | Atualizado: ${updated} | Sem match: ${unmatched} | Zerado/vazio: ${skipped} • Atrasos — Importado: ${importedAtrasos} | Atualizado: ${updatedAtrasos} | Sem match: ${unmatchedAtrasos} | Zerado/vazio: ${skippedAtrasos}`);
+
+    const unmatchedSheetsHe = result?.details?.unmatchedSheets || [];
+    const unmatchedSheetsAtrasos = result?.details?.unmatchedSheetsAtrasos || [];
+    if ((unmatched || unmatchedAtrasos) && elements.rhImportError) {
+      const namesHe = unmatchedSheetsHe.slice(0, 8).map((x) => x.sheetName).filter(Boolean);
+      const namesAtr = unmatchedSheetsAtrasos.slice(0, 8).map((x) => x.sheetName).filter(Boolean);
+      const msgParts = [];
+      if (unmatched && namesHe.length) {
+        msgParts.push(`H.E sem match: ${namesHe.join(' | ')}${unmatchedSheetsHe.length > 8 ? ` | +${unmatchedSheetsHe.length - 8}` : ''}`);
+      } else if (unmatched) {
+        msgParts.push('H.E: existem abas sem match (verifique nomes).');
+      }
+      if (unmatchedAtrasos && namesAtr.length) {
+        msgParts.push(`Atrasos sem match: ${namesAtr.join(' | ')}${unmatchedSheetsAtrasos.length > 8 ? ` | +${unmatchedSheetsAtrasos.length - 8}` : ''}`);
+      } else if (unmatchedAtrasos) {
+        msgParts.push('Atrasos: existem abas sem match (verifique nomes).');
+      }
+      elements.rhImportError.textContent = msgParts.join(' • ');
+      return;
+    }
+
+    closeRhImportModal();
+    await refreshRhAll();
+  } catch (error) {
+    if (elements.rhImportError) {
+      elements.rhImportError.textContent = error.message || 'Erro ao importar.';
+    } else {
+      showToast(error.message || 'Erro ao importar.', true);
+    }
+  } finally {
+    if (elements.rhImportConfirm) {
+      elements.rhImportConfirm.disabled = false;
+    }
+  }
+}
+
+function renderRhSetores() {
+  if (!elements.rhViewSetores) {
+    return;
+  }
+  elements.rhViewSetores.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'pcp-top-actions';
+  if (canEditRh()) {
+    const btn = document.createElement('button');
+    btn.className = 'btn secondary';
+    btn.type = 'button';
+    btn.textContent = 'Novo setor';
+    btn.addEventListener('click', () => openRhSectorModal(null));
+    header.appendChild(btn);
+  }
+  elements.rhViewSetores.appendChild(header);
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'table-wrapper pcp-table-wrapper';
+  const table = document.createElement('table');
+  table.className = 'pcp-table';
+  table.innerHTML = '<thead><tr><th>Setor</th><th>Gestor</th><th>Centro custo</th><th>Ações</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+
+  (state.rhSetores || []).forEach((s) => {
+    const tr = document.createElement('tr');
+    const tdNome = document.createElement('td');
+    tdNome.textContent = String(s.nome_setor || '').trim();
+    const tdGestor = document.createElement('td');
+    tdGestor.textContent = String(s.gestor_responsavel || '').trim();
+    const tdCc = document.createElement('td');
+    tdCc.textContent = String(s.centro_custo || '').trim();
+    const tdAcoes = document.createElement('td');
+    if (canEditRh()) {
+      const edit = document.createElement('button');
+      edit.className = 'btn secondary';
+      edit.type = 'button';
+      edit.textContent = 'Editar';
+      edit.addEventListener('click', () => openRhSectorModal(s));
+      const del = document.createElement('button');
+      del.className = 'btn danger';
+      del.type = 'button';
+      del.style.marginLeft = '8px';
+      del.textContent = 'Inativar';
+      del.addEventListener('click', () => confirmRhAction(`Inativar o setor "${s.nome_setor}"?`, async () => {
+        await window.api.rhDeleteSetor({ username: getAuthUsername(), id: s.id });
+        await refreshRhAll();
+        setRhHeSubView('setores');
+      }));
+      tdAcoes.appendChild(edit);
+      tdAcoes.appendChild(del);
+    } else {
+      tdAcoes.textContent = '—';
+    }
+    tr.appendChild(tdNome);
+    tr.appendChild(tdGestor);
+    tr.appendChild(tdCc);
+    tr.appendChild(tdAcoes);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  elements.rhViewSetores.appendChild(tableWrap);
+}
+
+function renderRhColaboradores() {
+  if (!elements.rhViewColaboradores) {
+    return;
+  }
+  elements.rhViewColaboradores.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'pcp-top-actions';
+  if (canEditRh()) {
+    const btn = document.createElement('button');
+    btn.className = 'btn secondary';
+    btn.type = 'button';
+    btn.textContent = 'Novo colaborador';
+    btn.addEventListener('click', () => openRhCollabModal(null));
+    header.appendChild(btn);
+  }
+  elements.rhViewColaboradores.appendChild(header);
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'table-wrapper pcp-table-wrapper';
+  const table = document.createElement('table');
+  table.className = 'pcp-table';
+  table.innerHTML = '<thead><tr><th>Nome</th><th>Setor</th><th>Cargo</th><th>Status</th><th>Admissão</th><th>Limite</th><th>Ações</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+
+  (state.rhColaboradores || []).forEach((c) => {
+    const tr = document.createElement('tr');
+    const tdNome = document.createElement('td');
+    tdNome.textContent = String(c.nome || '').trim();
+    const tdSetor = document.createElement('td');
+    tdSetor.textContent = getSetorLabelById(c.setor_id) || '—';
+    const tdCargo = document.createElement('td');
+    tdCargo.textContent = String(c.cargo || '').trim();
+    const tdStatus = document.createElement('td');
+    tdStatus.textContent = String(c.status || '').trim();
+    const tdAdm = document.createElement('td');
+    tdAdm.textContent = formatYmdToBr(String(c.data_admissao || '').trim());
+    const tdLim = document.createElement('td');
+    tdLim.textContent = String(c.limite_mensal || '').trim() ? `${String(c.limite_mensal).trim()} h` : '—';
+    const tdAcoes = document.createElement('td');
+    if (canEditRh()) {
+      const edit = document.createElement('button');
+      edit.className = 'btn secondary';
+      edit.type = 'button';
+      edit.textContent = 'Editar';
+      edit.addEventListener('click', () => openRhCollabModal(c));
+      const toggle = document.createElement('button');
+      toggle.className = 'btn secondary';
+      toggle.type = 'button';
+      toggle.style.marginLeft = '8px';
+      toggle.textContent = String(c.status || '').trim() === 'inativo' ? 'Ativar' : 'Inativar';
+      toggle.addEventListener('click', () => confirmRhAction(`Alterar status de "${c.nome}"?`, async () => {
+        await window.api.rhToggleColaboradorStatus({ username: getAuthUsername(), id: c.id });
+        await refreshRhAll();
+        setRhHeSubView('colaboradores');
+      }));
+      const del = document.createElement('button');
+      del.className = 'btn danger';
+      del.type = 'button';
+      del.style.marginLeft = '8px';
+      del.textContent = 'Remover';
+      del.addEventListener('click', () => confirmRhAction(`Remover o colaborador "${c.nome}"?`, async () => {
+        await window.api.rhDeleteColaborador({ username: getAuthUsername(), id: c.id });
+        await refreshRhAll();
+        setRhHeSubView('colaboradores');
+      }));
+      tdAcoes.appendChild(edit);
+      tdAcoes.appendChild(toggle);
+      tdAcoes.appendChild(del);
+    } else {
+      tdAcoes.textContent = '—';
+    }
+    tr.appendChild(tdNome);
+    tr.appendChild(tdSetor);
+    tr.appendChild(tdCargo);
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdAdm);
+    tr.appendChild(tdLim);
+    tr.appendChild(tdAcoes);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  elements.rhViewColaboradores.appendChild(tableWrap);
+}
+
+async function renderRhConfig() {
+  if (!elements.rhViewConfig) {
+    return;
+  }
+  elements.rhViewConfig.innerHTML = '';
+
+  const username = getAuthUsername();
+  const canEdit = canEditRh();
+  const cfg = (await window.api.rhConfigGet({ username }))?.config || {};
+  const ctx = state.rhContext || {};
+
+  const card = document.createElement('div');
+  card.className = 'rh-kpi-card';
+  const title = document.createElement('p');
+  title.className = 'rh-kpi-title';
+  title.textContent = 'Configurações';
+  card.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'rh-grid-2';
+
+  const buildNumberField = (labelText, defaultValue) => {
+    const field = document.createElement('div');
+    field.className = 'field';
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.25';
+    input.min = '0';
+    input.value = String(defaultValue);
+    input.disabled = !canEdit;
+    field.appendChild(label);
+    field.appendChild(input);
+    return { field, input };
+  };
+
+  const justField = buildNumberField('Justificativa obrigatória acima de (horas)', cfg.justificativa_acima_horas ?? 2);
+  const limField = buildNumberField('Limite mensal padrão por colaborador (horas)', cfg.limite_mensal_padrao ?? 40);
+  grid.appendChild(justField.field);
+  grid.appendChild(limField.field);
+
+  const m1h = buildNumberField('Margem faixa 1 até (horas)', cfg.margem_faixa_1_ate_horas ?? 25);
+  const m1p = buildNumberField('Margem faixa 1 (%)', cfg.margem_faixa_1_percent ?? 50);
+  const m2h = buildNumberField('Margem faixa 2 até (horas)', cfg.margem_faixa_2_ate_horas ?? 40);
+  const m2p = buildNumberField('Margem faixa 2 (%)', cfg.margem_faixa_2_percent ?? 60);
+  const m3h = buildNumberField('Margem faixa 3 até (horas)', cfg.margem_faixa_3_ate_horas ?? 60);
+  const m3p = buildNumberField('Margem faixa 3 (%)', cfg.margem_faixa_3_percent ?? 80);
+  const m4p = buildNumberField('Margem faixa 4 (%) (acima)', cfg.margem_faixa_4_percent ?? 100);
+  grid.appendChild(m1h.field);
+  grid.appendChild(m1p.field);
+  grid.appendChild(m2h.field);
+  grid.appendChild(m2p.field);
+  grid.appendChild(m3h.field);
+  grid.appendChild(m3p.field);
+  grid.appendChild(m4p.field);
+  card.appendChild(grid);
+
+  if (canEdit) {
+    const actions = document.createElement('div');
+    actions.className = 'pcp-top-actions';
+    const btn = document.createElement('button');
+    btn.className = 'btn primary';
+    btn.type = 'button';
+    btn.textContent = 'Salvar configurações';
+    btn.addEventListener('click', async () => {
+      try {
+        await window.api.rhConfigSet({
+          username,
+          config: {
+            justificativa_acima_horas: Number(justField.input.value || 0),
+            limite_mensal_padrao: Number(limField.input.value || 0),
+            margem_faixa_1_ate_horas: Number(m1h.input.value || 0),
+            margem_faixa_1_percent: Number(m1p.input.value || 0),
+            margem_faixa_2_ate_horas: Number(m2h.input.value || 0),
+            margem_faixa_2_percent: Number(m2p.input.value || 0),
+            margem_faixa_3_ate_horas: Number(m3h.input.value || 0),
+            margem_faixa_3_percent: Number(m3p.input.value || 0),
+            margem_faixa_4_percent: Number(m4p.input.value || 0)
+          }
+        });
+        showToast('Configurações RH salvas.');
+        await refreshRhAll();
+        setRhHeSubView('config');
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar configurações RH.', true);
+      }
+    });
+    actions.appendChild(btn);
+    card.appendChild(actions);
+  } else {
+    const note = document.createElement('p');
+    note.className = 'rh-kpi-sub';
+    note.textContent = 'Somente RH pode alterar configurações.';
+    card.appendChild(note);
+  }
+
+  elements.rhViewConfig.appendChild(card);
+
+  const infoCard = document.createElement('div');
+  infoCard.className = 'rh-kpi-card';
+  const infoTitle = document.createElement('p');
+  infoTitle.className = 'rh-kpi-title';
+  infoTitle.textContent = 'Permissões e Base';
+  const infoText = document.createElement('p');
+  infoText.className = 'rh-kpi-sub';
+  infoText.textContent = 'O acesso ao RH é controlado na aba Configuração (Logins): "RH" para visualizar e "RH Editar" para lançar/editar/apagar.';
+  const baseText = document.createElement('p');
+  baseText.className = 'rh-kpi-sub';
+  baseText.textContent = ctx.dbFilePath ? `Base: ${ctx.dbFilePath}` : '';
+  infoCard.appendChild(infoTitle);
+  infoCard.appendChild(infoText);
+  if (baseText.textContent) {
+    infoCard.appendChild(baseText);
+  }
+  elements.rhViewConfig.appendChild(infoCard);
+}
+
+async function renderRhAudit() {
+  if (!elements.rhViewAudit) {
+    return;
+  }
+  elements.rhViewAudit.innerHTML = '';
+  const username = getAuthUsername();
+  const audit = (await window.api.rhAuditList({ username, limit: 200 }))?.rows || [];
+  state.rhAudit = audit;
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'table-wrapper pcp-table-wrapper';
+  const table = document.createElement('table');
+  table.className = 'pcp-table';
+  table.innerHTML = '<thead><tr><th>Data/Hora</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>ID</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  audit.forEach((row) => {
+    const tr = document.createElement('tr');
+    const tdDt = document.createElement('td');
+    tdDt.textContent = String(row.data_hora || '').replace('T', ' ').slice(0, 19);
+    const tdU = document.createElement('td');
+    tdU.textContent = String(row.username || '').trim();
+    const tdA = document.createElement('td');
+    tdA.textContent = String(row.action || '').trim();
+    const tdE = document.createElement('td');
+    tdE.textContent = String(row.entity || '').trim();
+    const tdId = document.createElement('td');
+    tdId.textContent = String(row.entity_id || '').trim();
+    tr.appendChild(tdDt);
+    tr.appendChild(tdU);
+    tr.appendChild(tdA);
+    tr.appendChild(tdE);
+    tr.appendChild(tdId);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  elements.rhViewAudit.appendChild(tableWrap);
+
+  if (!audit.length) {
+    const p = document.createElement('p');
+    p.className = 'pcp-empty-state';
+    p.textContent = 'Sem auditoria no momento.';
+    elements.rhViewAudit.appendChild(p);
+  }
 }
 
 function getVersionParts(version) {
@@ -4267,6 +6036,11 @@ async function init() {
   try {
     const settings = await window.api.getSettings();
     state.settings = settings || {};
+    const needsFirstSetup = !String(state.settings.rootFolder || '').trim() || !String(state.settings.fiscalRoot || '').trim();
+    state.needsFirstSetup = needsFirstSetup;
+    if (needsFirstSetup) {
+      state.authUser = { username: '', permissions: { pcp: false, fiscal: false, settings: true, log: true } };
+    }
     state.currentListType = elements.listTypeSelect.value || 'acabamento';
     updateMoldagemFilterVisibility();
     updateProjectMissingFilterVisibility();
@@ -4291,9 +6065,17 @@ async function init() {
     if (elements.fiscalRootInput) {
       elements.fiscalRootInput.value = state.settings.fiscalRoot || '';
     }
+    if (elements.trackingApiKeyInput) {
+      elements.trackingApiKeyInput.value = state.settings.trackingApiKey || '';
+    }
     applyTheme(state.settings.theme || 'light');
     applyPermissionsToTabs();
-    openAppLoginModal();
+    if (needsFirstSetup) {
+      switchTab('settings');
+      showToast('Configure a Pasta raiz e o Caminho Fiscal (R:) antes do login.');
+    } else {
+      openAppLoginModal();
+    }
   } catch (error) {
     showToast(`Erro ao carregar configuracao: ${error.message}`, true);
   }
@@ -4348,6 +6130,7 @@ async function handleSaveSettings() {
     const saved = await window.api.saveSettings({
       rootFolder: elements.rootFolderInput.value || '',
       fiscalRoot: elements.fiscalRootInput?.value || '',
+      trackingApiKey: elements.trackingApiKeyInput?.value || '',
       theme: nextTheme
     });
 
@@ -4356,8 +6139,64 @@ async function handleSaveSettings() {
 
     await loadUsers();
     renderUsersTable();
+
+    if (state.needsFirstSetup) {
+      state.needsFirstSetup = false;
+      state.authUser = null;
+      applyPermissionsToTabs();
+      openAppLoginModal();
+    }
   } catch (error) {
     showToast(`Erro ao salvar configuracao: ${error.message}`, true);
+  }
+}
+
+async function handleFiscalTrackingLookup() {
+  if (!elements.fiscalTrackingCode || !elements.fiscalTrackingResult) {
+    return;
+  }
+
+  const rawCode = String(elements.fiscalTrackingCode.value || '').trim();
+  if (!rawCode) {
+    elements.fiscalTrackingResult.classList.add('error');
+    elements.fiscalTrackingResult.textContent = 'Informe um código de rastreio.';
+    return;
+  }
+
+  elements.fiscalTrackingResult.classList.remove('error');
+  elements.fiscalTrackingResult.textContent = 'Consultando...';
+
+  try {
+    const result = await window.api.fiscalTrackingLookup({ code: rawCode });
+    if (!result || !result.valid) {
+      elements.fiscalTrackingResult.classList.add('error');
+      elements.fiscalTrackingResult.textContent = 'Código não encontrado/ inválido.';
+      return;
+    }
+
+    const parts = [`Status: ${result.status || '-'}`];
+    if (result.fiscal && (result.fiscal.cliente || result.fiscal.nf)) {
+      const label = [
+        result.fiscal.cliente ? `Cliente: ${result.fiscal.cliente}` : '',
+        result.fiscal.nf ? `NF: ${result.fiscal.nf}` : ''
+      ].filter(Boolean).join(' | ');
+      if (label) {
+        parts.push(label);
+      }
+    }
+    if (result.destino) {
+      parts.push(`Destino: ${result.destino}`);
+    }
+    if (result.local) {
+      parts.push(`Local: ${result.local}`);
+    }
+    if (result.updatedAt) {
+      parts.push(`Atualizado: ${result.updatedAt}`);
+    }
+    elements.fiscalTrackingResult.textContent = parts.join(' | ');
+  } catch (error) {
+    elements.fiscalTrackingResult.classList.add('error');
+    elements.fiscalTrackingResult.textContent = error.message || 'Erro ao consultar rastreio.';
   }
 }
 
@@ -4648,6 +6487,14 @@ if (elements.tabFiscal) {
     await requestFiscalAccess();
   });
 }
+if (elements.tabRh) {
+  elements.tabRh.addEventListener('click', () => {
+    if (elements.tabRh.classList.contains('active')) {
+      return;
+    }
+    requestRhAccess();
+  });
+}
 if (elements.tabSettings) {
   elements.tabSettings.addEventListener('click', () => {
     if (!canAccessArea('settings')) {
@@ -4885,6 +6732,18 @@ elements.dynamicHourInput.addEventListener('input', () => {
 if (elements.appLoginConfirm) {
   elements.appLoginConfirm.addEventListener('click', handleAppLoginConfirm);
 }
+if (elements.appLoginConfig) {
+  elements.appLoginConfig.addEventListener('click', handleAppLoginOpenSettings);
+}
+if (elements.appLoginFiscalRoot) {
+  elements.appLoginFiscalRoot.addEventListener('click', async () => {
+    await handleSelectFiscalRoot();
+    if (elements.appLoginError) {
+      elements.appLoginError.textContent = '';
+    }
+    elements.appLoginUsername?.focus?.();
+  });
+}
 if (elements.appLoginUsername || elements.appLoginPassword) {
   [elements.appLoginUsername, elements.appLoginPassword].filter(Boolean).forEach((input) => {
     input.addEventListener('keydown', (event) => {
@@ -4905,9 +6764,42 @@ if (elements.fiscalConfirmOk) {
   });
 }
 
+if (elements.fiscalOpenNfs) {
+  elements.fiscalOpenNfs.addEventListener('click', async () => {
+    try {
+      await loadFiscalNfs();
+    } catch (error) {
+      showToast(error.message || 'Erro ao carregar NFs do banco.', true);
+    }
+    state.fiscalSelectionNf = null;
+    state.fiscalNfItems = [];
+    state.fiscalView = 'nfs';
+    renderFiscalScreen();
+  });
+}
+
+if (elements.fiscalBackMenu) {
+  elements.fiscalBackMenu.addEventListener('click', () => {
+    state.fiscalSelectionNf = null;
+    state.fiscalNfItems = [];
+    state.fiscalView = 'menu';
+    renderFiscalScreen();
+  });
+}
+
 if (elements.fiscalBtnCadastrarNf) {
   elements.fiscalBtnCadastrarNf.addEventListener('click', () => {
     openFiscalNfModal();
+  });
+}
+if (elements.fiscalTrackingCheck) {
+  elements.fiscalTrackingCheck.addEventListener('click', handleFiscalTrackingLookup);
+}
+if (elements.fiscalTrackingCode) {
+  elements.fiscalTrackingCode.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      handleFiscalTrackingLookup();
+    }
   });
 }
 if (elements.fiscalBtnPesquisarNf) {
@@ -5183,6 +7075,783 @@ if (elements.adminSettingsPassword) {
     } else if (event.key === 'Escape') {
       state.adminPendingAction = null;
       closeAdminSettingsModal();
+    }
+  });
+}
+
+async function openRhHeTool() {
+  try {
+    ensureRhMonthValue();
+    await refreshRhAll();
+    setRhView('he');
+    setRhHeSubView('dashboard');
+  } catch (error) {
+    showToast(error.message || 'Erro ao abrir RH.', true);
+  }
+}
+
+function setRhSolicHeTab(next) {
+  const tab = String(next || '').trim() === 'consulta' ? 'consulta' : 'form';
+  state.rhSolicHeTab = tab;
+  if (elements.rhSolicHeViewForm) {
+    elements.rhSolicHeViewForm.hidden = tab !== 'form';
+  }
+  if (elements.rhSolicHeViewConsulta) {
+    elements.rhSolicHeViewConsulta.hidden = tab !== 'consulta';
+  }
+  elements.rhSolicHeTabForm?.classList.toggle('active', tab === 'form');
+  elements.rhSolicHeTabConsulta?.classList.toggle('active', tab === 'consulta');
+}
+
+function computeSolicHeTotalMinutesFromTimes(start, end) {
+  const sText = String(start || '').trim();
+  const eText = String(end || '').trim();
+  const matchStart = sText.match(/^(\d{1,2}):(\d{2})$/);
+  const matchEnd = eText.match(/^(\d{1,2}):(\d{2})$/);
+  if (!matchStart || !matchEnd) {
+    return null;
+  }
+  const s = (Number(matchStart[1]) * 60) + Number(matchStart[2]);
+  const e = (Number(matchEnd[1]) * 60) + Number(matchEnd[2]);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) {
+    return null;
+  }
+  return e - s;
+}
+
+function formatSolicHeTotalHoursTextFromTimes(start, end) {
+  const diffMin = computeSolicHeTotalMinutesFromTimes(start, end);
+  if (diffMin == null) {
+    return '';
+  }
+  const h = Math.floor(diffMin / 60);
+  const m = diffMin % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+function computeSolicHeTotalHoursText() {
+  return formatSolicHeTotalHoursTextFromTimes(
+    elements.rhSolicHeInicio?.value,
+    elements.rhSolicHeFim?.value
+  );
+}
+
+function getSelectedSolicHeColab() {
+  const id = String(elements.rhSolicHeColab?.value || '').trim();
+  if (!id) {
+    return null;
+  }
+  return (state.rhColaboradores || []).find((c) => String(c.id) === id) || null;
+}
+
+function clearRhSolicHeForm({ keepSolicitante = true } = {}) {
+  if (elements.rhSolicHeError) {
+    elements.rhSolicHeError.textContent = '';
+  }
+  elements.rhSolicHeId && (elements.rhSolicHeId.value = '');
+  elements.rhSolicHeNumero && (elements.rhSolicHeNumero.value = '');
+  if (elements.rhSolicHeDataHe) {
+    elements.rhSolicHeDataHe.value = getTodayYmdLocal();
+  }
+  if (elements.rhSolicHeFinalidade) {
+    elements.rhSolicHeFinalidade.value = '';
+  }
+  if (elements.rhSolicHeInicio) {
+    elements.rhSolicHeInicio.value = '';
+  }
+  if (elements.rhSolicHeFim) {
+    elements.rhSolicHeFim.value = '';
+  }
+  if (elements.rhSolicHeTotal) {
+    elements.rhSolicHeTotal.value = '';
+  }
+  if (elements.rhSolicHeSetor) {
+    elements.rhSolicHeSetor.value = '';
+  }
+  if (elements.rhSolicHeSolicitante) {
+    elements.rhSolicHeSolicitante.value = keepSolicitante ? getAuthUsername() : '';
+  }
+  if (elements.rhSolicHeDataSolic) {
+    elements.rhSolicHeDataSolic.value = formatYmdToBr(getTodayYmdLocal());
+  }
+}
+
+function fillRhSolicHeForm(row) {
+  clearRhSolicHeForm();
+  if (elements.rhSolicHeId) elements.rhSolicHeId.value = String(row.id || '').trim();
+  if (elements.rhSolicHeNumero) elements.rhSolicHeNumero.value = String(row.numero_documento || '').trim();
+  if (elements.rhSolicHeDataHe) elements.rhSolicHeDataHe.value = String(row.data_he || '').trim();
+  if (elements.rhSolicHeFinalidade) elements.rhSolicHeFinalidade.value = String(row.finalidade || '').trim();
+  if (elements.rhSolicHeInicio) elements.rhSolicHeInicio.value = String(row.hora_inicio || '').trim();
+  if (elements.rhSolicHeFim) elements.rhSolicHeFim.value = String(row.hora_fim || '').trim();
+  if (elements.rhSolicHeTotal) elements.rhSolicHeTotal.value = computeSolicHeTotalHoursText();
+  if (elements.rhSolicHeSolicitante) elements.rhSolicHeSolicitante.value = String(row.solicitante || '').trim();
+  if (elements.rhSolicHeDataSolic) elements.rhSolicHeDataSolic.value = formatYmdToBr(String(row.data_solicitacao || '').trim());
+
+  if (elements.rhSolicHeColab) {
+    elements.rhSolicHeColab.value = String(row.colaborador_id || '').trim();
+  }
+  const colab = getSelectedSolicHeColab();
+  if (elements.rhSolicHeSetor) {
+    elements.rhSolicHeSetor.value = colab ? (getSetorLabelById(colab.setor_id) || String(row.setor || '').trim()) : String(row.setor || '').trim();
+  }
+}
+
+async function refreshRhSolicHeList() {
+  const username = getAuthUsername();
+  const filters = state.rhSolicHeFilters || {};
+  const result = await window.api.rhSolicHeList({ username, filters });
+  state.rhSolicHeRows = (result && result.rows) ? result.rows : [];
+  renderRhSolicHeTable();
+}
+
+function renderRhSolicHeTable() {
+  if (!elements.rhSolicHeTableHead || !elements.rhSolicHeTableBody) {
+    return;
+  }
+  elements.rhSolicHeTableHead.innerHTML = '<tr><th>Nº</th><th>Data H.E</th><th>Colaborador</th><th>Setor</th><th>Total</th><th>Solicitante</th><th>Data Solic.</th><th>Ações</th></tr>';
+  elements.rhSolicHeTableBody.innerHTML = '';
+
+  const rows = Array.isArray(state.rhSolicHeRows) ? state.rhSolicHeRows : [];
+  if (elements.rhSolicHeConsultaEmpty) {
+    elements.rhSolicHeConsultaEmpty.hidden = rows.length > 0;
+  }
+
+  rows.forEach((r) => {
+    const tr = document.createElement('tr');
+    const tdDoc = document.createElement('td');
+    tdDoc.textContent = String(r.numero_documento || '').trim();
+    const tdData = document.createElement('td');
+    tdData.textContent = formatYmdToBr(String(r.data_he || '').trim());
+    const tdColab = document.createElement('td');
+    tdColab.textContent = String(r.nome_colaborador || '').trim();
+    const tdSetor = document.createElement('td');
+    tdSetor.textContent = String(r.setor || '').trim();
+    const tdTot = document.createElement('td');
+    tdTot.textContent = formatSolicHeTotalHoursTextFromTimes(r.hora_inicio, r.hora_fim) || formatHours(Number(r.total_horas || 0));
+    const tdSolic = document.createElement('td');
+    tdSolic.textContent = String(r.solicitante || '').trim();
+    const tdDataSol = document.createElement('td');
+    tdDataSol.textContent = formatYmdToBr(String(r.data_solicitacao || '').trim());
+
+    const tdAcoes = document.createElement('td');
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'btn secondary';
+    viewBtn.type = 'button';
+    viewBtn.textContent = 'Visualizar';
+    viewBtn.addEventListener('click', async () => {
+      try {
+        await window.api.rhSolicHePdfOpen({ username: getAuthUsername(), id: r.id });
+      } catch (error) {
+        showToast(error.message || 'Erro ao abrir PDF.', true);
+      }
+    });
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn secondary';
+    editBtn.type = 'button';
+    editBtn.textContent = 'Editar';
+    editBtn.style.marginLeft = '8px';
+    editBtn.addEventListener('click', () => {
+      fillRhSolicHeForm(r);
+      setRhSolicHeTab('form');
+    });
+
+    const pdfBtn = document.createElement('button');
+    pdfBtn.className = 'btn secondary';
+    pdfBtn.type = 'button';
+    pdfBtn.textContent = 'PDF';
+    pdfBtn.style.marginLeft = '8px';
+    pdfBtn.addEventListener('click', async () => {
+      try {
+        await window.api.rhSolicHePdfRegen({ username: getAuthUsername(), id: r.id });
+        showToast('PDF gerado novamente.');
+      } catch (error) {
+        showToast(error.message || 'Erro ao gerar PDF.', true);
+      }
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn danger';
+    delBtn.type = 'button';
+    delBtn.textContent = 'Excluir';
+    delBtn.style.marginLeft = '8px';
+    delBtn.addEventListener('click', () => confirmRhAction('Excluir esta solicitação e o PDF?', async () => {
+      await window.api.rhSolicHeDelete({ username: getAuthUsername(), id: r.id });
+      await refreshRhSolicHeList();
+    }));
+
+    tdAcoes.appendChild(viewBtn);
+    tdAcoes.appendChild(editBtn);
+    tdAcoes.appendChild(delBtn);
+    tdAcoes.appendChild(pdfBtn);
+
+    tr.appendChild(tdDoc);
+    tr.appendChild(tdData);
+    tr.appendChild(tdColab);
+    tr.appendChild(tdSetor);
+    tr.appendChild(tdTot);
+    tr.appendChild(tdSolic);
+    tr.appendChild(tdDataSol);
+    tr.appendChild(tdAcoes);
+    elements.rhSolicHeTableBody.appendChild(tr);
+  });
+}
+
+async function openRhSolicHeTool() {
+  try {
+    ensureRhSolicHeApiAvailable();
+    await loadRhContext();
+    await loadRhBaseLists();
+
+    if (elements.rhSolicHeColab) {
+      const active = (state.rhColaboradores || []).filter((c) => String(c.status || '').trim() !== 'inativo');
+      setRhSelectOptions(
+        elements.rhSolicHeColab,
+        active.map((c) => ({ value: c.id, label: c.nome })),
+        { includeAll: true, allLabel: 'Selecione' }
+      );
+    }
+    if (elements.rhSolicHeSolicitante) {
+      elements.rhSolicHeSolicitante.value = getAuthUsername();
+    }
+    if (elements.rhSolicHeDataSolic) {
+      elements.rhSolicHeDataSolic.value = formatYmdToBr(getTodayYmdLocal());
+    }
+
+    // Filtros
+    setRhSelectOptions(
+      elements.rhSolicHeFilterColab,
+      (state.rhColaboradores || []).map((c) => ({ value: c.id, label: c.nome })),
+      { includeAll: true, allLabel: 'Todos' }
+    );
+    setRhSelectOptions(
+      elements.rhSolicHeFilterSetor,
+      (state.rhSetores || []).map((s) => ({ value: s.nome_setor || s.nome || s.id, label: s.nome_setor || s.nome || s.id })),
+      { includeAll: true, allLabel: 'Todos' }
+    );
+
+    clearRhSolicHeForm();
+    setRhSolicHeTab('form');
+    state.rhSolicHeFilters = {};
+    await refreshRhSolicHeList();
+
+    setRhView('solic_he');
+  } catch (error) {
+    showToast(error.message || 'Erro ao abrir solicitações.', true);
+  }
+}
+
+async function handleRhSubtab(next) {
+  setRhHeSubView(next);
+  try {
+    if (next === 'config') {
+      await renderRhConfig();
+    } else if (next === 'audit') {
+      await renderRhAudit();
+    }
+  } catch (error) {
+    showToast(error.message || 'Erro ao carregar visão RH.', true);
+  }
+}
+
+async function handleRhExportExcel() {
+  try {
+    const username = getAuthUsername();
+    const filters = getRhUiFilters();
+    const result = await window.api.rhExportExcel({
+      username,
+      ...filters,
+      suggestedName: `rh-he-${filters.month}.xlsx`
+    });
+    if (result && result.canceled) {
+      return;
+    }
+    showToast('Excel exportado com sucesso.');
+  } catch (error) {
+    showToast(error.message || 'Erro ao exportar Excel.', true);
+  }
+}
+
+async function handleRhExportPdf() {
+  try {
+    const username = getAuthUsername();
+    const filters = getRhUiFilters();
+    setRhHeSubView('dashboard');
+    elements.body.classList.add('pdf-rh-export');
+    const result = await window.api.rhExportPdf({
+      suggestedName: `rh-he-${filters.month}.pdf`,
+      dialogTitle: 'Salvar exportação RH em PDF',
+      exportWidth: 1122,
+      exportHeight: 794
+    });
+    if (!result || result.canceled) {
+      return;
+    }
+    showToast('PDF exportado com sucesso.');
+  } catch (error) {
+    showToast(error.message || 'Erro ao exportar PDF.', true);
+  } finally {
+    elements.body.classList.remove('pdf-rh-export');
+  }
+}
+
+if (elements.rhOpenHe) {
+  elements.rhOpenHe.addEventListener('click', openRhHeTool);
+}
+if (elements.rhOpenSolicHe) {
+  elements.rhOpenSolicHe.addEventListener('click', openRhSolicHeTool);
+}
+if (elements.rhHeBackMenu) {
+  elements.rhHeBackMenu.addEventListener('click', () => setRhView('menu'));
+}
+if (elements.rhSolicHeBackMenu) {
+  elements.rhSolicHeBackMenu.addEventListener('click', () => setRhView('menu'));
+}
+if (elements.rhHeRefresh) {
+  elements.rhHeRefresh.addEventListener('click', async () => {
+    try {
+      await refreshRhAll();
+      showToast('RH atualizado.');
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar RH.', true);
+    }
+  });
+}
+if (elements.rhSolicHeRefresh) {
+  elements.rhSolicHeRefresh.addEventListener('click', async () => {
+    try {
+      await refreshRhSolicHeList();
+      showToast('Solicitações atualizadas.');
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar solicitações.', true);
+    }
+  });
+}
+if (elements.rhSolicHeNew) {
+  elements.rhSolicHeNew.addEventListener('click', () => {
+    clearRhSolicHeForm({ keepSolicitante: true });
+    setRhSolicHeTab('form');
+  });
+}
+if (elements.rhSolicHeTabForm) {
+  elements.rhSolicHeTabForm.addEventListener('click', () => setRhSolicHeTab('form'));
+}
+if (elements.rhSolicHeTabConsulta) {
+  elements.rhSolicHeTabConsulta.addEventListener('click', () => setRhSolicHeTab('consulta'));
+}
+if (elements.rhSolicHeColab) {
+  elements.rhSolicHeColab.addEventListener('change', () => {
+    const colab = getSelectedSolicHeColab();
+    if (elements.rhSolicHeSetor) {
+      elements.rhSolicHeSetor.value = colab ? (getSetorLabelById(colab.setor_id) || '') : '';
+    }
+  });
+}
+['rhSolicHeInicio', 'rhSolicHeFim'].forEach((key) => {
+  const el = elements[key];
+  if (el) {
+    el.addEventListener('change', () => {
+      if (elements.rhSolicHeTotal) {
+        elements.rhSolicHeTotal.value = computeSolicHeTotalHoursText();
+      }
+    });
+  }
+});
+if (elements.rhSolicHeCancel) {
+  elements.rhSolicHeCancel.addEventListener('click', () => {
+    clearRhSolicHeForm({ keepSolicitante: true });
+  });
+}
+if (elements.rhSolicHeSave) {
+  elements.rhSolicHeSave.addEventListener('click', async () => {
+    try {
+      const username = getAuthUsername();
+      const id = String(elements.rhSolicHeId?.value || '').trim();
+      const data_he = String(elements.rhSolicHeDataHe?.value || '').trim();
+      const colaborador_id = String(elements.rhSolicHeColab?.value || '').trim();
+      const colab = getSelectedSolicHeColab();
+      const nome_colaborador = colab ? String(colab.nome || '').trim() : '';
+      const setor = colab ? (getSetorLabelById(colab.setor_id) || '') : String(elements.rhSolicHeSetor?.value || '').trim();
+      const finalidade = String(elements.rhSolicHeFinalidade?.value || '').trim();
+      const hora_inicio = String(elements.rhSolicHeInicio?.value || '').trim();
+      const hora_fim = String(elements.rhSolicHeFim?.value || '').trim();
+
+      if (!id) {
+        if (elements.rhSolicHeSolicitante) {
+          elements.rhSolicHeSolicitante.value = getAuthUsername();
+        }
+        if (elements.rhSolicHeDataSolic) {
+          elements.rhSolicHeDataSolic.value = formatYmdToBr(getTodayYmdLocal());
+        }
+      }
+
+      if (!data_he) {
+        throw new Error('Informe a data da Hora Extra.');
+      }
+      if (!colaborador_id) {
+        throw new Error('Selecione o colaborador.');
+      }
+      if (!setor) {
+        throw new Error('Setor não identificado.');
+      }
+      if (!finalidade) {
+        throw new Error('Informe a finalidade.');
+      }
+      if (!hora_inicio || !hora_fim) {
+        throw new Error('Informe o horário de início e término.');
+      }
+
+      if (elements.rhSolicHeError) {
+        elements.rhSolicHeError.textContent = '';
+      }
+      elements.rhSolicHeSave.disabled = true;
+
+      const result = await window.api.rhSolicHeUpsert({
+        username,
+        id,
+        data_he,
+        colaborador_id,
+        nome_colaborador,
+        setor,
+        finalidade,
+        hora_inicio,
+        hora_fim
+      });
+
+      const row = result && result.row ? result.row : null;
+      if (row) {
+        fillRhSolicHeForm(row);
+      }
+      showToast('Solicitação salva e PDF gerado.');
+      await refreshRhSolicHeList();
+      setRhSolicHeTab('consulta');
+    } catch (error) {
+      if (elements.rhSolicHeError) {
+        elements.rhSolicHeError.textContent = error.message || 'Erro ao salvar solicitação.';
+      } else {
+        showToast(error.message || 'Erro ao salvar solicitação.', true);
+      }
+    } finally {
+      if (elements.rhSolicHeSave) {
+        elements.rhSolicHeSave.disabled = false;
+      }
+    }
+  });
+}
+
+if (elements.rhSolicHeFilterClear) {
+  elements.rhSolicHeFilterClear.addEventListener('click', async () => {
+    if (elements.rhSolicHeFilterColab) elements.rhSolicHeFilterColab.value = '';
+    if (elements.rhSolicHeFilterSetor) elements.rhSolicHeFilterSetor.value = '';
+    if (elements.rhSolicHeFilterIni) elements.rhSolicHeFilterIni.value = '';
+    if (elements.rhSolicHeFilterFim) elements.rhSolicHeFilterFim.value = '';
+    if (elements.rhSolicHeFilterSolicitante) elements.rhSolicHeFilterSolicitante.value = '';
+    if (elements.rhSolicHeFilterDoc) elements.rhSolicHeFilterDoc.value = '';
+    state.rhSolicHeFilters = {};
+    await refreshRhSolicHeList();
+  });
+}
+if (elements.rhSolicHeFilterApply) {
+  elements.rhSolicHeFilterApply.addEventListener('click', async () => {
+    state.rhSolicHeFilters = {
+      colaborador_id: String(elements.rhSolicHeFilterColab?.value || '').trim(),
+      setor: String(elements.rhSolicHeFilterSetor?.value || '').trim(),
+      data_ini: String(elements.rhSolicHeFilterIni?.value || '').trim(),
+      data_fim: String(elements.rhSolicHeFilterFim?.value || '').trim(),
+      solicitante: String(elements.rhSolicHeFilterSolicitante?.value || '').trim(),
+      numero_documento: String(elements.rhSolicHeFilterDoc?.value || '').trim()
+    };
+    await refreshRhSolicHeList();
+  });
+}
+if (elements.rhHeAdd) {
+  elements.rhHeAdd.addEventListener('click', () => {
+    if (!canEditRh()) {
+      showToast('Somente RH pode lançar/editar.', true);
+      return;
+    }
+    openRhHeModal(null);
+  });
+}
+if (elements.rhHeImport) {
+  elements.rhHeImport.addEventListener('click', () => {
+    if (!canEditRh()) {
+      showToast('Somente RH (edição) pode importar.', true);
+      return;
+    }
+    openRhImportModal();
+  });
+}
+if (elements.rhHeExportExcel) {
+  elements.rhHeExportExcel.addEventListener('click', handleRhExportExcel);
+}
+if (elements.rhHeExportPdf) {
+  elements.rhHeExportPdf.addEventListener('click', handleRhExportPdf);
+}
+if (elements.rhFilterMonth) {
+  elements.rhFilterMonth.addEventListener('change', async () => {
+    try {
+      await refreshRhAll();
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar filtros.', true);
+    }
+  });
+}
+if (elements.rhFilterSector) {
+  elements.rhFilterSector.addEventListener('change', async () => {
+    try {
+      await refreshRhAll();
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar filtros.', true);
+    }
+  });
+}
+if (elements.rhFilterCollab) {
+  elements.rhFilterCollab.addEventListener('change', async () => {
+    try {
+      await refreshRhAll();
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar filtros.', true);
+    }
+  });
+}
+if (elements.rhFilterType) {
+  elements.rhFilterType.addEventListener('change', async () => {
+    try {
+      await refreshRhAll();
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar filtros.', true);
+    }
+  });
+}
+
+[
+  { el: elements.rhSubtabDashboard, view: 'dashboard' },
+  { el: elements.rhSubtabAtrasos, view: 'atrasos' },
+  { el: elements.rhSubtabRegistros, view: 'registros' },
+  { el: elements.rhSubtabColaboradores, view: 'colaboradores' },
+  { el: elements.rhSubtabSetores, view: 'setores' },
+  { el: elements.rhSubtabConfig, view: 'config' },
+  { el: elements.rhSubtabAudit, view: 'audit' }
+].forEach(({ el, view }) => {
+  if (el) {
+    el.addEventListener('click', () => handleRhSubtab(view));
+  }
+});
+
+if (elements.rhSectorCancel) {
+  elements.rhSectorCancel.addEventListener('click', closeRhSectorModal);
+}
+if (elements.rhSectorBackdrop) {
+  elements.rhSectorBackdrop.addEventListener('click', closeRhSectorModal);
+}
+if (elements.rhSectorConfirm) {
+  elements.rhSectorConfirm.addEventListener('click', async () => {
+    try {
+      const username = getAuthUsername();
+      const id = String(elements.rhSectorId?.value || '').trim();
+      const nome_setor = String(elements.rhSectorNome?.value || '').trim();
+      const gestor_responsavel = String(elements.rhSectorGestor?.value || '').trim();
+      const centro_custo = String(elements.rhSectorCc?.value || '').trim();
+      if (!nome_setor) {
+        throw new Error('Informe o nome do setor.');
+      }
+      await window.api.rhUpsertSetor({ username, id, nome_setor, gestor_responsavel, centro_custo });
+      closeRhSectorModal();
+      await refreshRhAll();
+      setRhHeSubView('setores');
+      showToast('Setor salvo.');
+    } catch (error) {
+      if (elements.rhSectorError) {
+        elements.rhSectorError.textContent = error.message || 'Erro ao salvar setor.';
+      }
+    }
+  });
+}
+
+if (elements.rhCollabCancel) {
+  elements.rhCollabCancel.addEventListener('click', closeRhCollabModal);
+}
+if (elements.rhCollabBackdrop) {
+  elements.rhCollabBackdrop.addEventListener('click', closeRhCollabModal);
+}
+if (elements.rhCollabConfirm) {
+  elements.rhCollabConfirm.addEventListener('click', async () => {
+    try {
+      const username = getAuthUsername();
+      const id = String(elements.rhCollabId?.value || '').trim();
+      const nome = String(elements.rhCollabNome?.value || '').trim();
+      const matricula = String(elements.rhCollabMatricula?.value || '').trim();
+      const setor_id = String(elements.rhCollabSetor?.value || '').trim();
+      const cargo = String(elements.rhCollabCargo?.value || '').trim();
+      const status = String(elements.rhCollabStatus?.value || 'ativo').trim();
+      const data_admissao = String(elements.rhCollabAdmissao?.value || '').trim();
+      const limite_mensal = String(elements.rhCollabLimite?.value || '').trim();
+      if (!nome) {
+        throw new Error('Informe o nome do colaborador.');
+      }
+      await window.api.rhUpsertColaborador({ username, id, nome, matricula, setor_id, cargo, status, data_admissao, limite_mensal });
+      closeRhCollabModal();
+      await refreshRhAll();
+      setRhHeSubView('colaboradores');
+      showToast('Colaborador salvo.');
+    } catch (error) {
+      if (elements.rhCollabError) {
+        elements.rhCollabError.textContent = error.message || 'Erro ao salvar colaborador.';
+      }
+    }
+  });
+}
+
+if (elements.rhHeCancel) {
+  elements.rhHeCancel.addEventListener('click', closeRhHeModal);
+}
+if (elements.rhHeBackdrop) {
+  elements.rhHeBackdrop.addEventListener('click', closeRhHeModal);
+}
+if (elements.rhHeKind) {
+  elements.rhHeKind.addEventListener('change', () => {
+    setRhHeModalKind(String(elements.rhHeKind?.value || 'he').trim(), { lock: false });
+  });
+}
+if (elements.rhHeConfirm) {
+  elements.rhHeConfirm.addEventListener('click', async () => {
+    try {
+      const username = getAuthUsername();
+      const id = String(elements.rhHeId?.value || '').trim();
+      const kind = String(elements.rhHeKind?.value || 'he').trim() === 'atraso' ? 'atraso' : 'he';
+      const colaborador_id = String(elements.rhHeColaborador?.value || '').trim();
+      const data = String(elements.rhHeData?.value || '').trim();
+      const quantidade_horas = parseDurationTextToHours(elements.rhHeQtd?.value);
+      const tipo_hora = String(elements.rhHeTipo?.value || '').trim();
+      const observacao = String(elements.rhHeObs?.value || '').trim();
+      const justificativa = String(elements.rhHeJust?.value || '').trim();
+      if (!colaborador_id) {
+        throw new Error('Selecione um colaborador.');
+      }
+      if (!data) {
+        throw new Error('Informe a data.');
+      }
+      if (!Number.isFinite(quantidade_horas) || quantidade_horas <= 0) {
+        throw new Error('Informe a duração (ex: 1:30).');
+      }
+      if (kind === 'atraso') {
+        if (!window.api || typeof window.api.rhUpsertAtraso !== 'function') {
+          throw new Error('Função de atrasos não disponível (atualize o app).');
+        }
+        await window.api.rhUpsertAtraso({
+          username,
+          id,
+          colaborador_id,
+          data,
+          quantidade_horas,
+          observacao
+        });
+      } else {
+        const limiteJust = Number(state.rhContext?.config?.justificativa_acima_horas ?? 2);
+        if (Number.isFinite(limiteJust) && quantidade_horas > limiteJust && !justificativa) {
+          throw new Error(`Justificativa obrigatória acima de ${limiteJust}h.`);
+        }
+        await window.api.rhUpsertHoraExtra({
+          username,
+          id,
+          colaborador_id,
+          data,
+          quantidade_horas,
+          tipo_hora,
+          observacao,
+          justificativa
+        });
+      }
+      closeRhHeModal();
+      await refreshRhAll();
+      setRhHeSubView(kind === 'atraso' ? 'atrasos' : 'registros');
+      showToast(kind === 'atraso' ? 'Atraso salvo.' : 'Lançamento salvo.');
+    } catch (error) {
+      if (elements.rhHeError) {
+        elements.rhHeError.textContent = error.message || 'Erro ao salvar lançamento.';
+      }
+    }
+  });
+}
+
+if (elements.rhConfirmCancel) {
+  elements.rhConfirmCancel.addEventListener('click', () => {
+    state.rhPendingConfirm = null;
+    closeRhModal(elements.rhConfirmModal);
+  });
+}
+if (elements.rhConfirmBackdrop) {
+  elements.rhConfirmBackdrop.addEventListener('click', () => {
+    state.rhPendingConfirm = null;
+    closeRhModal(elements.rhConfirmModal);
+  });
+}
+if (elements.rhConfirmOk) {
+  elements.rhConfirmOk.addEventListener('click', async () => {
+    const action = state.rhPendingConfirm;
+    state.rhPendingConfirm = null;
+    closeRhModal(elements.rhConfirmModal);
+    if (typeof action === 'function') {
+      try {
+        await action();
+      } catch (error) {
+        showToast(error.message || 'Erro ao executar operação.', true);
+      }
+    }
+  });
+}
+
+if (elements.rhImportCancel) {
+  elements.rhImportCancel.addEventListener('click', closeRhImportModal);
+}
+if (elements.rhImportBackdrop) {
+  elements.rhImportBackdrop.addEventListener('click', closeRhImportModal);
+}
+if (elements.rhImportConfirm) {
+  elements.rhImportConfirm.addEventListener('click', handleRhImportConfirm);
+}
+if (elements.rhImportFilePick || elements.rhImportFilePath || elements.rhImportFilePicker) {
+  const pickWorkbook = async () => {
+    try {
+      if (window.api && typeof window.api.rhPickImportWorkbook === 'function') {
+        const picked = await window.api.rhPickImportWorkbook();
+        if (picked) {
+          setRhImportWorkbookPath(picked);
+        }
+        return;
+      }
+      elements.rhImportFile?.click?.();
+    } catch (error) {
+      showToast(error.message || 'Erro ao selecionar planilha.', true);
+    }
+  };
+
+  if (elements.rhImportFilePick) {
+    elements.rhImportFilePick.addEventListener('click', pickWorkbook);
+  }
+  if (elements.rhImportFilePath) {
+    elements.rhImportFilePath.addEventListener('click', pickWorkbook);
+  }
+  if (elements.rhImportFilePicker) {
+    elements.rhImportFilePicker.addEventListener('dragover', (event) => {
+      event.preventDefault();
+    });
+    elements.rhImportFilePicker.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const dropped = event.dataTransfer?.files?.[0]?.path ? String(event.dataTransfer.files[0].path) : '';
+      if (dropped) {
+        setRhImportWorkbookPath(dropped);
+      }
+    });
+  }
+}
+if (elements.rhImportFile) {
+  elements.rhImportFile.addEventListener('change', () => {
+    const filePath = elements.rhImportFile?.files?.[0]?.path ? String(elements.rhImportFile.files[0].path) : '';
+    if (filePath) {
+      setRhImportWorkbookPath(filePath);
     }
   });
 }

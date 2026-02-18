@@ -6,6 +6,7 @@
   --muted: #5f6368;
   --border: #d9dce2;
   --primary: #6f1018;
+  --accent: #ff8b97;
   --primary-contrast: #ffffff;
   --kpi-value-color: var(--primary);
   --ring: rgba(111, 16, 24, 0.26);
@@ -25,6 +26,7 @@ body[data-theme='dark'] {
   --muted: #b5bbc6;
   --border: #343946;
   --primary: #8f1b26;
+  --accent: #ff8b97;
   --primary-contrast: #ffffff;
   --kpi-value-color: #ff8b97;
   --ring: rgba(143, 27, 38, 0.4);
@@ -242,6 +244,29 @@ body[data-theme='dark'] *::-webkit-scrollbar-thumb {
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   align-items: end;
+}
+
+.form-card > .log-header,
+.form-card > .pcp-modal-error,
+.form-card > .pcp-modal-actions {
+  grid-column: 1 / -1;
+}
+
+.rh-solic-he-form > .inline {
+  grid-column: 1 / -1;
+}
+
+.rh-solic-he-finalidade-field {
+  grid-column: 1 / -1;
+}
+
+.rh-solic-he-finalidade-field textarea {
+  height: 140px;
+  resize: none;
+}
+
+.rh-solic-he-consulta > .advanced-filter-card {
+  grid-column: 1 / -1;
 }
 
 .settings-logins-card {
@@ -567,17 +592,57 @@ select {
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
 
+textarea {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 10px 12px;
+  line-height: 1.35;
+  resize: vertical;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
   box-shadow: 0 0 0 3px var(--ring);
   background: var(--surface);
 }
 
+input[readonly],
+textarea[readonly] {
+  background: color-mix(in srgb, var(--surface-soft) 84%, var(--surface));
+  color: color-mix(in srgb, var(--text) 86%, var(--muted));
+  cursor: default;
+}
+
 .inline {
   display: flex;
   gap: 8px;
+}
+
+.field-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.field-note.error {
+  color: #ef4444;
+}
+
+.fiscal-tracking-box {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-soft) 86%, transparent);
 }
 
 .actions {
@@ -969,6 +1034,123 @@ tbody tr.status-prensado td {
   border-color: color-mix(in srgb, var(--primary) 65%, var(--border));
 }
 
+.rh-subtabs {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rh-subtab {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rh-subtab.active {
+  background: color-mix(in srgb, var(--primary) 20%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 65%, var(--border));
+}
+
+.rh-view {
+  margin-top: 12px;
+}
+
+.rh-grid-2 {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 980px) {
+  .rh-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rh-kpi-card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.rh-kpi-title {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rh-kpi-value {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.rh-kpi-sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rh-barlist {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rh-barrow {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  grid-template-columns: 180px 1fr 90px;
+}
+
+.rh-barlabel {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rh-bartrack {
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-soft) 75%, transparent);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.rh-barfill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 55%, var(--accent, #ff8b97)));
+  border-radius: 999px;
+}
+
+.rh-barvalue {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+body.pdf-rh-export .tabs,
+body.pdf-rh-export .topbar {
+  display: none;
+}
+
+body.pdf-rh-export .content {
+  padding-top: 0;
+}
+
 .pcp-eff-machine-filter {
   margin-top: 10px;
   display: none;
@@ -1073,6 +1255,17 @@ tbody tr.status-prensado td {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.pcp-cnc-bottom-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#pcp-cnc-charts .pcp-cnc-bottom-row .pcp-cnc-pie-card {
+  grid-column: auto;
 }
 
 .pcp-dashboard-kpi-grid {
@@ -2190,6 +2383,29 @@ body[data-theme='dark'] .pcp-link-button {
   margin-top: 4px;
 }
 
+.file-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.file-picker input {
+  flex: 1;
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-picker input[readonly] {
+  cursor: pointer;
+}
+
+.file-picker .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 @keyframes modal-pop {
   from {
     opacity: 0;
@@ -2623,7 +2839,8 @@ body.pdf-dashboard-export .pcp-dashboard-daily-legend i {
 }
 
 body.pdf-dashboard-export #pcp-moldagem-section,
-body.pdf-dashboard-export #pcp-cnc-section {
+body.pdf-dashboard-export #pcp-cnc-section,
+body.pdf-dashboard-export #pcp-rnc-section {
   break-before: page;
   page-break-before: always;
 }
@@ -2633,6 +2850,7 @@ body.pdf-dashboard-export .pcp-dashboard-kpi,
 body.pdf-dashboard-export .pcp-dashboard-chart-card,
 body.pdf-dashboard-export .pcp-moldagem-operators-row,
 body.pdf-dashboard-export .pcp-cnc-main-row,
+body.pdf-dashboard-export .pcp-cnc-bottom-row,
 body.pdf-dashboard-export .pcp-dashboard-chart-card-material {
   break-inside: avoid-page;
   page-break-inside: avoid;

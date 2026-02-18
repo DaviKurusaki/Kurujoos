@@ -1,6 +1,6 @@
-﻿{
+{
   "name": "listas-dinamicas-partsseals",
-  "version": "1.5.4",
+  "version": "1.5.15",
   "description": "Visualizador de listas diarias de acabamento",
   "main": "src/main.js",
   "scripts": {
@@ -35,4 +35,3 @@
     "electron-builder": "^25.1.8"
   }
 }
-

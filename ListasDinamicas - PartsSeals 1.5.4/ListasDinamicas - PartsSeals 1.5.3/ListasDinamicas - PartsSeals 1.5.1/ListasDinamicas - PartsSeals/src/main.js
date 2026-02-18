@@ -1,17 +1,192 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
 const XLSX = require('xlsx');
 
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const DEFAULT_SETTINGS = {
   rootFolder: '',
   fiscalRoot: '',
+  trackingApiKey: '',
   theme: 'light',
   lastLoginUsername: ''
 };
 const ADMIN_SETTINGS_PASSWORD = '0604';
+
+const XLSX_READ_OPTIONS = { cellDates: true };
+const XLSX_WORKBOOK_CACHE = new Map(); // filePath -> { mtimeMs, workbook }
+const WORKBOOK_AOA_CACHE = new WeakMap(); // workbook -> Map(sheetName -> aoa)
+const WORKBOOK_OBJECTS_CACHE = new WeakMap(); // workbook -> Map(sheetName -> objects[])
+const RH_HORAS_MONTH_INDEX_CACHE = new WeakMap(); // workbook -> { source: objects[], byMonth: Map<YYYY-MM, objects[]> }
+const RH_ENSURED_WORKBOOKS = new WeakSet();
+
+const FAST_CACHE_VERSION = 1;
+const FAST_CACHE_ROOT_FOLDER = () => path.join(app.getPath('userData'), 'fast-cache');
+
+function hashText(value) {
+  return crypto.createHash('sha1').update(String(value || ''), 'utf8').digest('hex');
+}
+
+function getFastCacheFilePath(tag, sourceFilePath) {
+  const safeTag = String(tag || '').trim() || 'generic';
+  const safeSource = String(sourceFilePath || '').trim();
+  const fileName = `${hashText(safeSource)}.json`;
+  return path.join(FAST_CACHE_ROOT_FOLDER(), safeTag, fileName);
+}
+
+function readFastCache(tag, sourceFilePath, expectedMtimeMs) {
+  try {
+    const cachePath = getFastCacheFilePath(tag, sourceFilePath);
+    if (!fs.existsSync(cachePath)) {
+      return null;
+    }
+    const text = fs.readFileSync(cachePath, 'utf8');
+    const parsed = text ? JSON.parse(text) : null;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    if (Number(parsed.version) !== FAST_CACHE_VERSION) {
+      return null;
+    }
+    if (String(parsed.sourceFilePath || '') !== String(sourceFilePath || '')) {
+      return null;
+    }
+    if (Number(parsed.sourceMtimeMs) !== Number(expectedMtimeMs || 0)) {
+      return null;
+    }
+    return parsed.payload ?? null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeFastCache(tag, sourceFilePath, sourceMtimeMs, payload) {
+  try {
+    const cachePath = getFastCacheFilePath(tag, sourceFilePath);
+    ensureDirSync(path.dirname(cachePath));
+    fs.writeFileSync(cachePath, JSON.stringify({
+      version: FAST_CACHE_VERSION,
+      sourceFilePath: String(sourceFilePath || ''),
+      sourceMtimeMs: Number(sourceMtimeMs || 0),
+      builtAt: new Date().toISOString(),
+      payload
+    }));
+  } catch (error) {
+    // cache é best-effort: ignora falhas (permissão/antivírus/etc)
+  }
+}
+
+function getFileMtimeMs(filePath) {
+  try {
+    return fs.statSync(filePath).mtimeMs || 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function readWorkbookCached(filePath) {
+  const safePath = String(filePath || '').trim();
+  if (!safePath) {
+    throw new Error('Caminho da planilha obrigatorio.');
+  }
+  const mtimeMs = getFileMtimeMs(safePath);
+  const cached = XLSX_WORKBOOK_CACHE.get(safePath) || null;
+  if (cached && cached.workbook && cached.mtimeMs === mtimeMs) {
+    return { workbook: cached.workbook, mtimeMs };
+  }
+  const workbook = XLSX.readFile(safePath, XLSX_READ_OPTIONS);
+  XLSX_WORKBOOK_CACHE.set(safePath, { workbook, mtimeMs });
+  return { workbook, mtimeMs };
+}
+
+function invalidateFileCaches(filePath) {
+  const safePath = String(filePath || '').trim();
+  if (!safePath) {
+    return;
+  }
+  XLSX_WORKBOOK_CACHE.delete(safePath);
+
+  if (FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.filePath === safePath) {
+    FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE = { filePath: '', mtimeMs: -1, pedidoToReqs: null, reqBaseToPedidos: null };
+  }
+  if (FISCAL_BANCO_PEDIDOS_ROWS_CACHE.filePath === safePath) {
+    FISCAL_BANCO_PEDIDOS_ROWS_CACHE = { filePath: '', mtimeMs: -1, result: null };
+  }
+  if (FISCAL_BANCO_PEDIDOS_LITE_CACHE.filePath === safePath) {
+    FISCAL_BANCO_PEDIDOS_LITE_CACHE = { filePath: '', mtimeMs: -1, rows: null, looksLikeHeader: false };
+  }
+  if (RH_SNAPSHOT_CACHE.filePath === safePath) {
+    RH_SNAPSHOT_CACHE = { filePath: '', mtimeMs: -1, snapshot: null };
+  }
+}
+
+function writeWorkbookFile(workbook, filePath) {
+  XLSX.writeFile(workbook, filePath);
+  invalidateFileCaches(filePath);
+}
+
+function invalidateWorkbookCaches(workbook, sheetName = null) {
+  if (!workbook || typeof workbook !== 'object') {
+    return;
+  }
+  if (!sheetName) {
+    WORKBOOK_AOA_CACHE.delete(workbook);
+    WORKBOOK_OBJECTS_CACHE.delete(workbook);
+    return;
+  }
+  const aoaMap = WORKBOOK_AOA_CACHE.get(workbook);
+  if (aoaMap) {
+    aoaMap.delete(sheetName);
+  }
+  const objMap = WORKBOOK_OBJECTS_CACHE.get(workbook);
+  if (objMap) {
+    objMap.delete(sheetName);
+  }
+}
+
+function getWorksheetEffectiveRange(worksheet) {
+  if (!worksheet) {
+    return null;
+  }
+  const keys = Object.keys(worksheet).filter((key) => key && key[0] !== '!');
+  if (!keys.length) {
+    return null;
+  }
+  let minR = Number.POSITIVE_INFINITY;
+  let minC = Number.POSITIVE_INFINITY;
+  let maxR = -1;
+  let maxC = -1;
+  keys.forEach((address) => {
+    const cell = worksheet[address];
+    if (!cell || (cell.v === undefined && cell.w === undefined && cell.f === undefined)) {
+      return;
+    }
+    const decoded = XLSX.utils.decode_cell(address);
+    if (!decoded) {
+      return;
+    }
+    minR = Math.min(minR, decoded.r);
+    minC = Math.min(minC, decoded.c);
+    maxR = Math.max(maxR, decoded.r);
+    maxC = Math.max(maxC, decoded.c);
+  });
+  if (maxR < 0 || maxC < 0 || !Number.isFinite(minR) || !Number.isFinite(minC)) {
+    return null;
+  }
+  return { s: { r: minR, c: minC }, e: { r: maxR, c: maxC } };
+}
+
+function sheetToAoaFast(worksheet) {
+  if (!worksheet) {
+    return [];
+  }
+  const effectiveRange = getWorksheetEffectiveRange(worksheet);
+  const range = effectiveRange || XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+  return XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: '', range });
+}
 
 function readUsersFile() {
   const bancoPedidosPath = resolveFiscalPath(FISCAL_BANK_PEDIDOS_RELATIVE);
@@ -19,7 +194,7 @@ function readUsersFile() {
     throw new Error(`Banco Pedidos nao encontrado: ${bancoPedidosPath}`);
   }
 
-  const workbook = XLSX.readFile(bancoPedidosPath, { cellDates: true });
+  const { workbook } = readWorkbookCached(bancoPedidosPath);
   const sheetName = 'USERS';
   if (!workbook.Sheets[sheetName]) {
     const ws = XLSX.utils.aoa_to_sheet([
@@ -30,7 +205,7 @@ function readUsersFile() {
   }
 
   const ws = workbook.Sheets[sheetName];
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  const aoa = sheetToAoaFast(ws);
   const headerRow = Array.isArray(aoa[0]) ? aoa[0] : [];
   const normalizedHeaders = headerRow.map((value) => String(value || '').trim().toUpperCase());
   const idx = {
@@ -123,7 +298,7 @@ function writeUsersFile(payload) {
     workbook.SheetNames.push(sheetName);
   }
 
-  XLSX.writeFile(workbook, bancoPedidosPath);
+  writeWorkbookFile(workbook, bancoPedidosPath);
   return { users };
 }
 
@@ -145,6 +320,8 @@ function getDefaultPermissionMap() {
   return {
     pcp: true,
     fiscal: false,
+    rh: false,
+    rh_edit: false,
     settings: true,
     log: true
   };
@@ -508,15 +685,3105 @@ function normalizeText(value) {
     .toUpperCase();
 }
 
+function parseHeHoursFromCell(cell) {
+  if (!cell) {
+    return 0;
+  }
+
+  const raw = cell.v;
+  if (raw == null) {
+    const text = String(cell.w || '').trim();
+    if (!text) {
+      return 0;
+    }
+    return parseHeHoursFromCell({ v: text });
+  }
+
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    // Se vier como Date, usa hora/minuto como duração.
+    return raw.getHours() + (raw.getMinutes() / 60) + (raw.getSeconds() / 3600);
+  }
+
+  if (typeof raw === 'number') {
+    // Excel pode guardar duração como fração do dia (ex.: 0.0625 = 1h30m)
+    const z = String(cell.z || '').toLowerCase();
+    const w = String(cell.w || '').trim();
+    const looksLikeTime = z.includes('h') || z.includes('m') || z.includes(':') || w.includes(':');
+    if (raw >= 0 && raw <= 1 && looksLikeTime) {
+      return raw * 24;
+    }
+    return raw;
+  }
+
+  const text = String(raw || '').trim();
+  if (!text) {
+    return 0;
+  }
+  const hhmm = text.match(/^(-?\d{1,3})\s*:\s*(\d{1,2})/);
+  if (hhmm) {
+    const h = Number(hhmm[1]);
+    const m = Number(hhmm[2]);
+    if (Number.isFinite(h) && Number.isFinite(m)) {
+      return h + (m / 60);
+    }
+  }
+  const cleaned = text.replace(/\s*h/i, '').replace(/\s*m/i, '').replace(',', '.');
+  const num = Number(cleaned);
+  if (Number.isFinite(num)) {
+    return num;
+  }
+  return 0;
+}
+
+function parseRhAtrasoHoursFromCell(cell) {
+  if (!cell) {
+    return 0;
+  }
+
+  const raw = cell.v;
+  if (raw == null) {
+    const text = String(cell.w || '').trim();
+    if (!text) {
+      return 0;
+    }
+    return parseRhAtrasoHoursFromCell({ v: text });
+  }
+
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return raw.getHours() + (raw.getMinutes() / 60) + (raw.getSeconds() / 3600);
+  }
+
+  if (typeof raw === 'number') {
+    const z = String(cell.z || '').toLowerCase();
+    const w = String(cell.w || '').trim();
+    const looksLikeTime = z.includes('h') || z.includes('m') || z.includes(':') || w.includes(':');
+    if (raw >= 0 && raw <= 1 && looksLikeTime) {
+      return raw * 24;
+    }
+    // Atraso geralmente vem em minutos quando é um número "solto" (ex.: 15, 30, 90).
+    if (raw > 8 && raw <= 720 && !looksLikeTime) {
+      return raw / 60;
+    }
+    return raw;
+  }
+
+  const text = String(raw || '').trim();
+  if (!text) {
+    return 0;
+  }
+
+  const minMatch = text.match(/^(-?\d+(?:[.,]\d+)?)\s*(min|mins|m)\b/i);
+  if (minMatch) {
+    const mins = Number(String(minMatch[1]).replace(',', '.'));
+    if (Number.isFinite(mins)) {
+      return mins / 60;
+    }
+  }
+  const hMatch = text.match(/^(-?\d+(?:[.,]\d+)?)\s*(h|hora|horas)\b/i);
+  if (hMatch) {
+    const hours = Number(String(hMatch[1]).replace(',', '.'));
+    if (Number.isFinite(hours)) {
+      return hours;
+    }
+  }
+
+  // Fallback para hh:mm, fração do dia e números simples.
+  return parseHeHoursFromCell({ v: text });
+}
+
+function tokenizePersonName(value) {
+  const normalized = normalizeText(String(value || '').replace(/['`]/g, ' '));
+  const stop = new Set(['DE', 'DA', 'DO', 'DAS', 'DOS', 'E']);
+  return normalized
+    .split(' ')
+    .map((t) => String(t || '').trim())
+    .filter((t) => t.length >= 2 && !stop.has(t));
+}
+
+function matchColaboradorBySheetName(colaboradores, sheetName) {
+  const list = Array.isArray(colaboradores) ? colaboradores : [];
+  const sheet = String(sheetName || '').trim();
+  if (!sheet) {
+    return { match: null, score: 0 };
+  }
+  const sheetNorm = normalizeText(sheet.replace(/['`]/g, ' '));
+  const sheetTokens = tokenizePersonName(sheetNorm);
+  if (!sheetTokens.length) {
+    return { match: null, score: 0 };
+  }
+
+  let best = null;
+  let bestScore = 0;
+  list.forEach((c) => {
+    const name = String(c.nome || '').trim();
+    if (!name) {
+      return;
+    }
+    const collabNorm = normalizeText(name.replace(/['`]/g, ' '));
+    const collabTokens = tokenizePersonName(collabNorm);
+    if (!collabTokens.length) {
+      return;
+    }
+
+    let hits = 0;
+    collabTokens.forEach((t) => {
+      if (sheetTokens.includes(t)) {
+        hits += 1;
+      }
+    });
+
+    const base = hits / collabTokens.length;
+    const bonus = (sheetNorm.includes(collabNorm) || collabNorm.includes(sheetNorm)) ? 0.35 : 0;
+    const score = base + bonus;
+    if (score > bestScore) {
+      best = c;
+      bestScore = score;
+    }
+  });
+
+  // exige pelo menos 2 tokens batendo ou substring forte
+  if (!best) {
+    return { match: null, score: 0 };
+  }
+  const bestTokens = tokenizePersonName(best.nome || '');
+  const hits = bestTokens.filter((t) => sheetTokens.includes(t)).length;
+  const strongSubstring = sheetNorm.includes(normalizeText(best.nome || ''));
+  if (hits >= 2 || (strongSubstring && bestScore >= 0.6)) {
+    return { match: best, score: bestScore };
+  }
+  if (bestScore >= 0.9) {
+    return { match: best, score: bestScore };
+  }
+  return { match: null, score: bestScore };
+}
+
 const FISCAL_BANK_PEDIDOS_RELATIVE = ['Arquivos KuruJoos', 'Financeiro', 'banco Pedidos.xlsx'];
 const FISCAL_BANCO_ORDENS_RELATIVE = ['PartsSeals', 'Banco de Ordens', 'BancoDeOrdens.xlsm'];
-const PCP_DASHBOARD_DAILY_RELATIVE = ['Rede', 'PartsSeals', 'Programação de Produção Diaria'];
+const FISCAL_RNC_RELATIVE = ['PartsSeals', 'Rnc Interna', 'Relatório de Não Conformidade BANCO DE DADOS.xlsm'];
+const PCP_DASHBOARD_DAILY_RELATIVE = ['PartsSeals', 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'];
+const PCP_DASHBOARD_DAILY_RELATIVE_LEGACY = ['Rede', 'PartsSeals', 'Programação de Produção Diaria'];
+const RH_HE_DB_RELATIVE = ['Arquivos KuruJoos', 'RH', 'GestaoHorasExtras.xlsx'];
+
+function ensureDirSync(folderPath) {
+  if (!folderPath) {
+    return;
+  }
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+}
+
+function generateRhId() {
+  return Date.now() * 1000 + Math.floor(Math.random() * 1000);
+}
+
+function readSheetAoa(workbook, sheetName) {
+  const ws = workbook && workbook.Sheets ? workbook.Sheets[sheetName] : null;
+  if (!ws) {
+    return [];
+  }
+  const safeSheet = String(sheetName || '').trim();
+  if (!safeSheet) {
+    return [];
+  }
+  let aoaMap = WORKBOOK_AOA_CACHE.get(workbook);
+  if (!aoaMap) {
+    aoaMap = new Map();
+    WORKBOOK_AOA_CACHE.set(workbook, aoaMap);
+  }
+  if (aoaMap.has(safeSheet)) {
+    return aoaMap.get(safeSheet);
+  }
+  const aoa = sheetToAoaFast(ws);
+  aoaMap.set(safeSheet, aoa);
+  return aoa;
+}
+
+function writeSheetAoa(workbook, sheetName, aoa) {
+  const next = Array.isArray(aoa) ? aoa : [];
+  if (!workbook.Sheets[sheetName]) {
+    workbook.SheetNames.push(sheetName);
+  }
+  workbook.Sheets[sheetName] = XLSX.utils.aoa_to_sheet(next);
+  invalidateWorkbookCaches(workbook, sheetName);
+}
+
+function normalizeRhRole(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (text === 'RH') {
+    return 'RH';
+  }
+  return 'GESTOR';
+}
+
+function resolveRhDbPath() {
+  return resolveFiscalPath(RH_HE_DB_RELATIVE);
+}
+
+function createRhWorkbookIfMissing(filePath) {
+  ensureDirSync(path.dirname(filePath));
+  const wb = XLSX.utils.book_new();
+
+  writeSheetAoa(wb, 'SETORES', [[
+    'ID',
+    'NOME_SETOR',
+    'GESTOR_RESPONSAVEL',
+    'CENTRO_CUSTO',
+    'CREATED_AT',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]]);
+
+  writeSheetAoa(wb, 'COLABORADORES', [[
+    'ID',
+    'NOME',
+    'MATRICULA',
+    'SETOR_ID',
+    'CARGO',
+    'STATUS',
+    'DATA_ADMISSAO',
+    'LIMITE_MENSAL',
+    'CREATED_AT',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]]);
+
+  writeSheetAoa(wb, 'HORAS_EXTRAS', [[
+    'ID',
+    'COLABORADOR_ID',
+    'DATA',
+    'QUANTIDADE_HORAS',
+    'TIPO_HORA',
+    'OBSERVACAO',
+    'JUSTIFICATIVA',
+    'CRIADO_POR',
+    'DATA_REGISTRO',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]]);
+
+  writeSheetAoa(wb, 'ATRASOS', [[
+    'ID',
+    'COLABORADOR_ID',
+    'DATA',
+    'QUANTIDADE_HORAS',
+    'OBSERVACAO',
+    'CRIADO_POR',
+    'DATA_REGISTRO',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]]);
+
+  writeSheetAoa(wb, 'SOLICITACOES_HE', [[
+    'ID',
+    'NUMERO_DOCUMENTO',
+    'DATA_SOLICITACAO',
+    'DATA_HE',
+    'COLABORADOR_ID',
+    'NOME_COLABORADOR',
+    'SETOR',
+    'FINALIDADE',
+    'HORA_INICIO',
+    'HORA_FIM',
+    'TOTAL_HORAS',
+    'SOLICITANTE',
+    'DATA_CRIACAO',
+    'ULTIMA_ATUALIZACAO',
+    'DELETED_AT'
+  ]]);
+
+  writeSheetAoa(wb, 'USERS_RH', [[
+    'USERNAME',
+    'ROLE',
+    'SETOR_ID',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]]);
+
+  writeSheetAoa(wb, 'CONFIG', [
+    ['KEY', 'VALUE'],
+    ['justificativa_acima_horas', '2'],
+    ['limite_mensal_padrao', '40'],
+    ['margem_faixa_1_ate_horas', '25'],
+    ['margem_faixa_1_percent', '50'],
+    ['margem_faixa_2_ate_horas', '40'],
+    ['margem_faixa_2_percent', '60'],
+    ['margem_faixa_3_ate_horas', '60'],
+    ['margem_faixa_3_percent', '80'],
+    ['margem_faixa_4_percent', '100']
+  ]);
+
+  writeSheetAoa(wb, 'AUDIT_LOG', [[
+    'ID',
+    'DATA_HORA',
+    'USERNAME',
+    'ACTION',
+    'ENTITY',
+    'ENTITY_ID',
+    'BEFORE_JSON',
+    'AFTER_JSON'
+  ]]);
+
+  writeSheetAoa(wb, 'ACCESS_REQUESTS', [[
+    'ID',
+    'USERNAME',
+    'REQUESTED_ROLE',
+    'REQUESTED_SETOR_ID',
+    'REQUESTED_AT',
+    'STATUS',
+    'DECIDED_AT',
+    'DECIDED_BY'
+  ]]);
+
+  writeWorkbookFile(wb, filePath);
+  return wb;
+}
+
+function ensureRhSheets(workbook) {
+  const required = {
+    SETORES: [
+      'ID',
+      'NOME_SETOR',
+      'GESTOR_RESPONSAVEL',
+      'CENTRO_CUSTO',
+      'CREATED_AT',
+      'UPDATED_AT',
+      'DELETED_AT'
+    ],
+    COLABORADORES: [
+      'ID',
+      'NOME',
+      'MATRICULA',
+      'SETOR_ID',
+      'CARGO',
+      'STATUS',
+      'DATA_ADMISSAO',
+      'LIMITE_MENSAL',
+      'CREATED_AT',
+      'UPDATED_AT',
+      'DELETED_AT'
+    ],
+    HORAS_EXTRAS: [
+      'ID',
+      'COLABORADOR_ID',
+      'DATA',
+      'QUANTIDADE_HORAS',
+      'TIPO_HORA',
+      'OBSERVACAO',
+      'JUSTIFICATIVA',
+      'CRIADO_POR',
+      'DATA_REGISTRO',
+      'UPDATED_AT',
+      'DELETED_AT'
+    ],
+    ATRASOS: [
+      'ID',
+      'COLABORADOR_ID',
+      'DATA',
+      'QUANTIDADE_HORAS',
+      'OBSERVACAO',
+      'CRIADO_POR',
+      'DATA_REGISTRO',
+      'UPDATED_AT',
+      'DELETED_AT'
+    ],
+    SOLICITACOES_HE: [
+      'ID',
+      'NUMERO_DOCUMENTO',
+      'DATA_SOLICITACAO',
+      'DATA_HE',
+      'COLABORADOR_ID',
+      'NOME_COLABORADOR',
+      'SETOR',
+      'FINALIDADE',
+      'HORA_INICIO',
+      'HORA_FIM',
+      'TOTAL_HORAS',
+      'SOLICITANTE',
+      'DATA_CRIACAO',
+      'ULTIMA_ATUALIZACAO',
+      'DELETED_AT'
+    ],
+    USERS_RH: ['USERNAME', 'ROLE', 'SETOR_ID', 'UPDATED_AT', 'DELETED_AT'],
+    CONFIG: ['KEY', 'VALUE'],
+    AUDIT_LOG: [
+      'ID',
+      'DATA_HORA',
+      'USERNAME',
+      'ACTION',
+      'ENTITY',
+      'ENTITY_ID',
+      'BEFORE_JSON',
+      'AFTER_JSON'
+    ],
+    ACCESS_REQUESTS: [
+      'ID',
+      'USERNAME',
+      'REQUESTED_ROLE',
+      'REQUESTED_SETOR_ID',
+      'REQUESTED_AT',
+      'STATUS',
+      'DECIDED_AT',
+      'DECIDED_BY'
+    ]
+  };
+
+  const ensureSheetColumns = (sheetName, headers) => {
+    if (!workbook.Sheets[sheetName]) {
+      writeSheetAoa(workbook, sheetName, [headers]);
+      return;
+    }
+    const aoa = readSheetAoa(workbook, sheetName);
+    const existingHeader = Array.isArray(aoa[0]) ? aoa[0].map((h) => String(h || '').trim().toUpperCase()) : [];
+    const normalizedRequired = headers.map((h) => String(h || '').trim().toUpperCase()).filter(Boolean);
+    const missing = normalizedRequired.filter((h) => !existingHeader.includes(h));
+    if (!missing.length) {
+      return;
+    }
+    const nextHeader = [...existingHeader, ...missing];
+    const next = [nextHeader];
+    for (let i = 1; i < aoa.length; i += 1) {
+      const row = Array.isArray(aoa[i]) ? [...aoa[i]] : [];
+      while (row.length < nextHeader.length) {
+        row.push('');
+      }
+      next.push(row);
+    }
+    writeSheetAoa(workbook, sheetName, next);
+  };
+
+  Object.entries(required).forEach(([sheetName, headers]) => ensureSheetColumns(sheetName, headers));
+}
+
+function readRhDb() {
+  const filePath = resolveRhDbPath();
+  if (!fs.existsSync(filePath)) {
+    const workbook = createRhWorkbookIfMissing(filePath);
+    ensureRhSheets(workbook);
+    RH_ENSURED_WORKBOOKS.add(workbook);
+    const mtimeMs = getFileMtimeMs(filePath);
+    XLSX_WORKBOOK_CACHE.set(filePath, { workbook, mtimeMs });
+    return { workbook, filePath };
+  }
+  const { workbook } = readWorkbookCached(filePath);
+  if (!RH_ENSURED_WORKBOOKS.has(workbook)) {
+    ensureRhSheets(workbook);
+    RH_ENSURED_WORKBOOKS.add(workbook);
+  }
+  return { workbook, filePath };
+}
+
+function buildRhSnapshotFromWorkbook(workbook) {
+  const config = getRhConfig(workbook);
+  const setores = listRhSetores({ allowedSectorId: '' }, workbook);
+  const colaboradores = listRhColaboradores({ allowedSectorId: '' }, workbook);
+
+  const rawHe = readSheetObjects(workbook, 'HORAS_EXTRAS');
+  const horasByMonth = {};
+  rawHe.forEach((row) => {
+    if (String(row.DELETED_AT || '').trim()) {
+      return;
+    }
+    const id = String(row.ID || '').trim();
+    const colaborador_id = String(row.COLABORADOR_ID || '').trim();
+    const data = String(row.DATA || '').trim();
+    if (!id || !colaborador_id || !data) {
+      return;
+    }
+    const month = data.length >= 7 ? data.slice(0, 7) : '';
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return;
+    }
+    if (!horasByMonth[month]) {
+      horasByMonth[month] = [];
+    }
+    horasByMonth[month].push({
+      id,
+      colaborador_id,
+      data,
+      quantidade_horas: Number(row.QUANTIDADE_HORAS || 0),
+      tipo_hora: String(row.TIPO_HORA || '').trim(),
+      observacao: String(row.OBSERVACAO || '').trim(),
+      justificativa: String(row.JUSTIFICATIVA || '').trim(),
+      criado_por: String(row.CRIADO_POR || '').trim(),
+      data_registro: String(row.DATA_REGISTRO || '').trim()
+    });
+  });
+
+  const rawAtrasos = readSheetObjects(workbook, 'ATRASOS');
+  const atrasosByMonth = {};
+  rawAtrasos.forEach((row) => {
+    if (String(row.DELETED_AT || '').trim()) {
+      return;
+    }
+    const id = String(row.ID || '').trim();
+    const colaborador_id = String(row.COLABORADOR_ID || '').trim();
+    const data = String(row.DATA || '').trim();
+    if (!id || !colaborador_id || !data) {
+      return;
+    }
+    const month = data.length >= 7 ? data.slice(0, 7) : '';
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return;
+    }
+    if (!atrasosByMonth[month]) {
+      atrasosByMonth[month] = [];
+    }
+    atrasosByMonth[month].push({
+      id,
+      colaborador_id,
+      data,
+      quantidade_horas: Number(row.QUANTIDADE_HORAS || 0),
+      observacao: String(row.OBSERVACAO || '').trim(),
+      criado_por: String(row.CRIADO_POR || '').trim(),
+      data_registro: String(row.DATA_REGISTRO || '').trim()
+    });
+  });
+
+  return { config, setores, colaboradores, horasByMonth, atrasosByMonth };
+}
+
+function readRhSnapshot() {
+  const filePath = resolveRhDbPath();
+  if (!fs.existsSync(filePath)) {
+    const workbook = createRhWorkbookIfMissing(filePath);
+    ensureRhSheets(workbook);
+    RH_ENSURED_WORKBOOKS.add(workbook);
+    const mtimeMs = getFileMtimeMs(filePath);
+    XLSX_WORKBOOK_CACHE.set(filePath, { workbook, mtimeMs });
+    const snapshot = buildRhSnapshotFromWorkbook(workbook);
+    RH_SNAPSHOT_CACHE = { filePath, mtimeMs, snapshot };
+    writeFastCache('rh-snapshot', filePath, mtimeMs, snapshot);
+    return { filePath, mtimeMs, snapshot };
+  }
+
+  const mtimeMs = getFileMtimeMs(filePath);
+  if (
+    RH_SNAPSHOT_CACHE.snapshot
+    && RH_SNAPSHOT_CACHE.filePath === filePath
+    && RH_SNAPSHOT_CACHE.mtimeMs === mtimeMs
+  ) {
+    return { filePath, mtimeMs, snapshot: RH_SNAPSHOT_CACHE.snapshot };
+  }
+
+  const diskCache = readFastCache('rh-snapshot', filePath, mtimeMs);
+  if (
+    diskCache
+    && typeof diskCache === 'object'
+    && Object.prototype.hasOwnProperty.call(diskCache, 'atrasosByMonth')
+  ) {
+    RH_SNAPSHOT_CACHE = { filePath, mtimeMs, snapshot: diskCache };
+    return { filePath, mtimeMs, snapshot: diskCache };
+  }
+
+  const { workbook } = readWorkbookCached(filePath);
+  if (!RH_ENSURED_WORKBOOKS.has(workbook)) {
+    ensureRhSheets(workbook);
+    RH_ENSURED_WORKBOOKS.add(workbook);
+  }
+  const snapshot = buildRhSnapshotFromWorkbook(workbook);
+  RH_SNAPSHOT_CACHE = { filePath, mtimeMs, snapshot };
+  writeFastCache('rh-snapshot', filePath, mtimeMs, snapshot);
+  return { filePath, mtimeMs, snapshot };
+}
+
+function mapAoaToObjects(aoa) {
+  const rows = Array.isArray(aoa) ? aoa : [];
+  const header = Array.isArray(rows[0]) ? rows[0] : [];
+  const headers = header.map((h) => String(h || '').trim().toUpperCase());
+  const result = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i] || [];
+    const obj = {};
+    headers.forEach((key, idx) => {
+      if (!key) {
+        return;
+      }
+      obj[key] = row[idx] !== undefined ? row[idx] : '';
+    });
+    result.push(obj);
+  }
+  return result;
+}
+
+function readSheetObjects(workbook, sheetName) {
+  const safeSheet = String(sheetName || '').trim();
+  if (!safeSheet) {
+    return [];
+  }
+  let objMap = WORKBOOK_OBJECTS_CACHE.get(workbook);
+  if (!objMap) {
+    objMap = new Map();
+    WORKBOOK_OBJECTS_CACHE.set(workbook, objMap);
+  }
+  if (objMap.has(safeSheet)) {
+    return objMap.get(safeSheet);
+  }
+  const aoa = readSheetAoa(workbook, safeSheet);
+  const objs = mapAoaToObjects(aoa);
+  objMap.set(safeSheet, objs);
+  return objs;
+}
+
+function pickConfigMap(workbook) {
+  const objs = readSheetObjects(workbook, 'CONFIG');
+  const result = {};
+  objs.forEach((row) => {
+    const key = String(row.KEY || '').trim();
+    if (!key) {
+      return;
+    }
+    result[key] = String(row.VALUE ?? '').trim();
+  });
+  return result;
+}
+
+function getRhConfig(workbook) {
+  const raw = pickConfigMap(workbook);
+  const justificativa_acima_horas = Number(raw.justificativa_acima_horas || 2);
+  const limite_mensal_padrao = Number(raw.limite_mensal_padrao || 40);
+  const faixa1Ate = Number(raw.margem_faixa_1_ate_horas || 25);
+  const faixa1Pct = Number(raw.margem_faixa_1_percent || 50);
+  const faixa2Ate = Number(raw.margem_faixa_2_ate_horas || 40);
+  const faixa2Pct = Number(raw.margem_faixa_2_percent || 60);
+  const faixa3Ate = Number(raw.margem_faixa_3_ate_horas || 60);
+  const faixa3Pct = Number(raw.margem_faixa_3_percent || 80);
+  const faixa4Pct = Number(raw.margem_faixa_4_percent || 100);
+  const safeFaixa1Ate = Number.isFinite(faixa1Ate) ? faixa1Ate : 25;
+  const safeFaixa1Pct = Number.isFinite(faixa1Pct) ? faixa1Pct : 50;
+  const safeFaixa2Ate = Number.isFinite(faixa2Ate) ? faixa2Ate : 40;
+  const safeFaixa2Pct = Number.isFinite(faixa2Pct) ? faixa2Pct : 60;
+  const safeFaixa3Ate = Number.isFinite(faixa3Ate) ? faixa3Ate : 60;
+  const safeFaixa3Pct = Number.isFinite(faixa3Pct) ? faixa3Pct : 80;
+  const safeFaixa4Pct = Number.isFinite(faixa4Pct) ? faixa4Pct : 100;
+
+  const parseBool = (value, fallback = true) => {
+    const text = String(value ?? '').trim().toLowerCase();
+    if (!text) {
+      return fallback;
+    }
+    if (['0', 'false', 'nao', 'não', 'n'].includes(text)) {
+      return false;
+    }
+    if (['1', 'true', 'sim', 's', 'yes', 'y'].includes(text)) {
+      return true;
+    }
+    return fallback;
+  };
+
+  const parseIsoDateList = (value) => {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      return [];
+    }
+    return text
+      .split(/[\n,;|]+/g)
+      .map((x) => String(x || '').trim())
+      .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x));
+  };
+
+  const descontar_feriados = parseBool(raw.descontar_feriados, true);
+  const municipio_uf = String(raw.municipio_uf || '').trim() || `SANTA BARBARA D'OESTE-SP`;
+  const feriados_extras = [
+    ...parseIsoDateList(raw.feriados_extras),
+    ...parseIsoDateList(raw.feriados_municipais)
+  ];
+  return {
+    justificativa_acima_horas: Number.isFinite(justificativa_acima_horas) ? justificativa_acima_horas : 2,
+    limite_mensal_padrao: Number.isFinite(limite_mensal_padrao) ? limite_mensal_padrao : 40,
+    descontar_feriados,
+    municipio_uf,
+    feriados_extras,
+    margem_faixa_1_ate_horas: safeFaixa1Ate,
+    margem_faixa_1_percent: safeFaixa1Pct,
+    margem_faixa_2_ate_horas: safeFaixa2Ate,
+    margem_faixa_2_percent: safeFaixa2Pct,
+    margem_faixa_3_ate_horas: safeFaixa3Ate,
+    margem_faixa_3_percent: safeFaixa3Pct,
+    margem_faixa_4_percent: safeFaixa4Pct,
+    margem_faixas: [
+      {
+        ate_horas: safeFaixa1Ate,
+        percent: safeFaixa1Pct
+      },
+      {
+        ate_horas: safeFaixa2Ate,
+        percent: safeFaixa2Pct
+      },
+      {
+        ate_horas: safeFaixa3Ate,
+        percent: safeFaixa3Pct
+      },
+      {
+        ate_horas: null,
+        percent: safeFaixa4Pct
+      }
+    ]
+  };
+}
+
+function getRhMarginForHours(config, totalHours) {
+  const safeHours = Number(totalHours || 0);
+  const tiers = (config && Array.isArray(config.margem_faixas)) ? config.margem_faixas : [];
+  for (let i = 0; i < tiers.length; i += 1) {
+    const tier = tiers[i] || {};
+    const ate = tier.ate_horas;
+    if (ate == null) {
+      return { percent: Number(tier.percent || 0), faixa: `ACIMA` };
+    }
+    if (safeHours <= Number(ate)) {
+      return { percent: Number(tier.percent || 0), faixa: `ATÉ ${Number(ate)}h` };
+    }
+  }
+  return { percent: 0, faixa: '' };
+}
+
+function setRhConfig({ username, config }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const next = config && typeof config === 'object' ? config : {};
+  const current = getRhConfig(workbook);
+  const aoa = [
+    ['KEY', 'VALUE'],
+    ['justificativa_acima_horas', String(Number(next.justificativa_acima_horas ?? current.justificativa_acima_horas))],
+    ['limite_mensal_padrao', String(Number(next.limite_mensal_padrao ?? current.limite_mensal_padrao))],
+    ['margem_faixa_1_ate_horas', String(Number(next.margem_faixa_1_ate_horas ?? (current.margem_faixas?.[0]?.ate_horas ?? 25)))],
+    ['margem_faixa_1_percent', String(Number(next.margem_faixa_1_percent ?? (current.margem_faixas?.[0]?.percent ?? 50)))],
+    ['margem_faixa_2_ate_horas', String(Number(next.margem_faixa_2_ate_horas ?? (current.margem_faixas?.[1]?.ate_horas ?? 40)))],
+    ['margem_faixa_2_percent', String(Number(next.margem_faixa_2_percent ?? (current.margem_faixas?.[1]?.percent ?? 60)))],
+    ['margem_faixa_3_ate_horas', String(Number(next.margem_faixa_3_ate_horas ?? (current.margem_faixas?.[2]?.ate_horas ?? 60)))],
+    ['margem_faixa_3_percent', String(Number(next.margem_faixa_3_percent ?? (current.margem_faixas?.[2]?.percent ?? 80)))],
+    ['margem_faixa_4_percent', String(Number(next.margem_faixa_4_percent ?? (current.margem_faixas?.[3]?.percent ?? 100)))]
+  ];
+  writeSheetAoa(workbook, 'CONFIG', aoa);
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: 'CONFIG_SET',
+    entity: 'CONFIG',
+    entityId: '',
+    before: current,
+    after: getRhConfig(workbook)
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { config: getRhConfig(workbook) };
+}
+
+function listRhUsers(workbook) {
+  const objs = readSheetObjects(workbook, 'USERS_RH');
+  return objs
+    .filter((row) => !String(row.DELETED_AT || '').trim())
+    .map((row) => ({
+      username: normalizeUsername(row.USERNAME),
+      role: normalizeRhRole(row.ROLE),
+      setor_id: String(row.SETOR_ID || '').trim() || ''
+    }))
+    .filter((row) => row.username);
+}
+
+function getRhUserRule(workbook, username) {
+  const safe = normalizeUsername(username);
+  if (!safe) {
+    return null;
+  }
+  const users = listRhUsers(workbook);
+  return users.find((u) => normalizeUsername(u.username) === safe) || null;
+}
+
+function ensureRhAccess(username, { requireEdit = false } = {}) {
+  const safeUser = normalizeUsername(username);
+  if (!safeUser) {
+    throw new Error('Usuário obrigatório.');
+  }
+  const user = listUsers().find((u) => normalizeUsername(u.username) === safeUser) || null;
+  if (!user) {
+    throw new Error('Usuário não encontrado.');
+  }
+  const perms = normalizePermissions(user.permissions || {});
+  if (!perms.rh) {
+    throw new Error('Usuário sem permissão para acessar RH.');
+  }
+  if (requireEdit && !perms.rh_edit) {
+    throw new Error('Usuário sem permissão de edição no RH.');
+  }
+
+  const canEdit = !!perms.rh_edit;
+  const { snapshot, filePath } = readRhSnapshot();
+  return {
+    username: safeUser,
+    permissions: perms,
+    canEdit,
+    role: canEdit ? 'RH' : 'VISUALIZAR',
+    allowedSectorId: '',
+    dbFilePath: filePath,
+    config: snapshot && snapshot.config ? snapshot.config : {}
+  };
+}
+
+function listRhSetores(ctx, workbook) {
+  const objs = readSheetObjects(workbook, 'SETORES');
+  return objs
+    .filter((row) => !String(row.DELETED_AT || '').trim())
+    .map((row) => ({
+      id: String(row.ID || '').trim(),
+      nome_setor: String(row.NOME_SETOR || '').trim(),
+      gestor_responsavel: String(row.GESTOR_RESPONSAVEL || '').trim(),
+      centro_custo: String(row.CENTRO_CUSTO || '').trim()
+    }))
+    .filter((row) => row.id && row.nome_setor)
+    .filter((row) => !ctx.allowedSectorId || String(row.id) === String(ctx.allowedSectorId))
+    .sort((a, b) => String(a.nome_setor).localeCompare(String(b.nome_setor), 'pt-BR'));
+}
+
+function listRhColaboradores(ctx, workbook) {
+  const objs = readSheetObjects(workbook, 'COLABORADORES');
+  return objs
+    .filter((row) => !String(row.DELETED_AT || '').trim())
+    .map((row) => ({
+      id: String(row.ID || '').trim(),
+      nome: String(row.NOME || '').trim(),
+      matricula: String(row.MATRICULA || '').trim(),
+      setor_id: String(row.SETOR_ID || '').trim(),
+      cargo: String(row.CARGO || '').trim(),
+      status: String(row.STATUS || '').trim() || 'ativo',
+      data_admissao: String(row.DATA_ADMISSAO || '').trim(),
+      limite_mensal: String(row.LIMITE_MENSAL || '').trim()
+    }))
+    .filter((row) => row.id && row.nome)
+    .filter((row) => !ctx.allowedSectorId || String(row.setor_id) === String(ctx.allowedSectorId))
+    .sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+}
+
+function listRhSetoresFromSnapshot(ctx, snapshot) {
+  const setores = snapshot && Array.isArray(snapshot.setores) ? snapshot.setores : [];
+  return setores
+    .filter((row) => row && row.id && row.nome_setor)
+    .filter((row) => !ctx.allowedSectorId || String(row.id) === String(ctx.allowedSectorId));
+}
+
+function listRhColaboradoresFromSnapshot(ctx, snapshot) {
+  const colaboradores = snapshot && Array.isArray(snapshot.colaboradores) ? snapshot.colaboradores : [];
+  return colaboradores
+    .filter((row) => row && row.id && row.nome)
+    .filter((row) => !ctx.allowedSectorId || String(row.setor_id) === String(ctx.allowedSectorId));
+}
+
+function listRhHorasExtrasFromSnapshot(ctx, snapshot, filters) {
+  const { month, setorId, colaboradorId, tipoHora } = filters || {};
+  const safeMonth = String(month || '').trim();
+  if (!safeMonth || !/^\d{4}-\d{2}$/.test(safeMonth)) {
+    throw new Error('Mês inválido para RH. Use YYYY-MM.');
+  }
+
+  const setores = listRhSetoresFromSnapshot(ctx, snapshot);
+  const colaboradores = listRhColaboradoresFromSnapshot(ctx, snapshot);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+  const setorSet = new Set(setores.map((s) => String(s.id)));
+
+  const hoursByMonth = snapshot && snapshot.horasByMonth && typeof snapshot.horasByMonth === 'object'
+    ? snapshot.horasByMonth
+    : {};
+  const monthRows = Array.isArray(hoursByMonth[safeMonth]) ? hoursByMonth[safeMonth] : [];
+
+  const safeSetorId = String(setorId || '').trim();
+  const safeColabId = String(colaboradorId || '').trim();
+  const safeTipo = String(tipoHora || '').trim();
+  const allowedSector = ctx.allowedSectorId ? String(ctx.allowedSectorId) : '';
+
+  const rows = [];
+  for (let i = 0; i < monthRows.length; i += 1) {
+    const row = monthRows[i] || {};
+    const id = String(row.id || '').trim();
+    const colaborador_id = String(row.colaborador_id || '').trim();
+    const data = String(row.data || '').trim();
+    if (!id || !colaborador_id || !data) {
+      continue;
+    }
+
+    const tipo_hora = String(row.tipo_hora || '').trim();
+    if (safeTipo && tipo_hora !== safeTipo) {
+      continue;
+    }
+    if (safeColabId && colaborador_id !== safeColabId) {
+      continue;
+    }
+
+    const collab = collabById.get(String(colaborador_id));
+    if (!collab) {
+      continue;
+    }
+    const setorIdForCollab = String(collab.setor_id || '').trim();
+    if (allowedSector && setorIdForCollab !== allowedSector) {
+      continue;
+    }
+    if (safeSetorId && setorIdForCollab !== safeSetorId) {
+      continue;
+    }
+    if (setorIdForCollab && setorSet.size && !setorSet.has(setorIdForCollab)) {
+      continue;
+    }
+
+    rows.push({
+      id,
+      colaborador_id,
+      data,
+      quantidade_horas: Number(row.quantidade_horas || 0),
+      tipo_hora,
+      observacao: String(row.observacao || '').trim(),
+      justificativa: String(row.justificativa || '').trim(),
+      criado_por: String(row.criado_por || '').trim(),
+      data_registro: String(row.data_registro || '').trim()
+    });
+  }
+
+  rows.sort((a, b) => String(b.data).localeCompare(String(a.data)) || String(b.id).localeCompare(String(a.id)));
+  return rows;
+}
+
+function listRhAtrasosFromSnapshot(ctx, snapshot, filters) {
+  const { month, setorId, colaboradorId } = filters || {};
+  const safeMonth = String(month || '').trim();
+  if (!safeMonth || !/^\d{4}-\d{2}$/.test(safeMonth)) {
+    throw new Error('Mês inválido para RH. Use YYYY-MM.');
+  }
+
+  const setores = listRhSetoresFromSnapshot(ctx, snapshot);
+  const colaboradores = listRhColaboradoresFromSnapshot(ctx, snapshot);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+  const setorSet = new Set(setores.map((s) => String(s.id)));
+
+  const atrasosByMonth = snapshot && snapshot.atrasosByMonth && typeof snapshot.atrasosByMonth === 'object'
+    ? snapshot.atrasosByMonth
+    : {};
+  const monthRows = Array.isArray(atrasosByMonth[safeMonth]) ? atrasosByMonth[safeMonth] : [];
+
+  const safeSetorId = String(setorId || '').trim();
+  const safeColabId = String(colaboradorId || '').trim();
+  const allowedSector = ctx.allowedSectorId ? String(ctx.allowedSectorId) : '';
+
+  const rows = [];
+  for (let i = 0; i < monthRows.length; i += 1) {
+    const row = monthRows[i] || {};
+    const id = String(row.id || '').trim();
+    const colaborador_id = String(row.colaborador_id || '').trim();
+    const data = String(row.data || '').trim();
+    if (!id || !colaborador_id || !data) {
+      continue;
+    }
+    if (safeColabId && colaborador_id !== safeColabId) {
+      continue;
+    }
+
+    const collab = collabById.get(String(colaborador_id));
+    if (!collab) {
+      continue;
+    }
+    const setorIdForCollab = String(collab.setor_id || '').trim();
+    if (allowedSector && setorIdForCollab !== allowedSector) {
+      continue;
+    }
+    if (safeSetorId && setorIdForCollab !== safeSetorId) {
+      continue;
+    }
+    if (setorIdForCollab && setorSet.size && !setorSet.has(setorIdForCollab)) {
+      continue;
+    }
+
+    rows.push({
+      id,
+      colaborador_id,
+      data,
+      quantidade_horas: Number(row.quantidade_horas || 0),
+      observacao: String(row.observacao || '').trim(),
+      criado_por: String(row.criado_por || '').trim(),
+      data_registro: String(row.data_registro || '').trim()
+    });
+  }
+
+  rows.sort((a, b) => String(b.data).localeCompare(String(a.data)) || String(b.id).localeCompare(String(a.id)));
+  return rows;
+}
+
+function getRhHorasExtrasMonthIndex(workbook) {
+  const objs = readSheetObjects(workbook, 'HORAS_EXTRAS');
+  const cached = RH_HORAS_MONTH_INDEX_CACHE.get(workbook) || null;
+  if (cached && cached.source === objs && cached.byMonth) {
+    return cached.byMonth;
+  }
+  const byMonth = new Map();
+  for (let i = 0; i < objs.length; i += 1) {
+    const row = objs[i] || {};
+    if (String(row.DELETED_AT || '').trim()) {
+      continue;
+    }
+    const data = String(row.DATA || '').trim();
+    const month = data.length >= 7 ? data.slice(0, 7) : '';
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      continue;
+    }
+    if (!byMonth.has(month)) {
+      byMonth.set(month, []);
+    }
+    byMonth.get(month).push(row);
+  }
+  RH_HORAS_MONTH_INDEX_CACHE.set(workbook, { source: objs, byMonth });
+  return byMonth;
+}
+
+function listRhHorasExtras(ctx, workbook, filters) {
+  const { month, setorId, colaboradorId, tipoHora } = filters || {};
+  const safeMonth = String(month || '').trim();
+  if (!safeMonth || !/^\d{4}-\d{2}$/.test(safeMonth)) {
+    throw new Error('Mês inválido para RH. Use YYYY-MM.');
+  }
+
+  const setores = listRhSetores(ctx, workbook);
+  const colaboradores = listRhColaboradores(ctx, workbook);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+  const setorSet = new Set(setores.map((s) => String(s.id)));
+
+  const monthRows = (getRhHorasExtrasMonthIndex(workbook).get(safeMonth) || []);
+  const safeSetorId = String(setorId || '').trim();
+  const safeColabId = String(colaboradorId || '').trim();
+  const safeTipo = String(tipoHora || '').trim();
+  const allowedSector = ctx.allowedSectorId ? String(ctx.allowedSectorId) : '';
+
+  const rows = [];
+  for (let i = 0; i < monthRows.length; i += 1) {
+    const row = monthRows[i] || {};
+
+    const id = String(row.ID || '').trim();
+    const colaborador_id = String(row.COLABORADOR_ID || '').trim();
+    const data = String(row.DATA || '').trim();
+    if (!id || !colaborador_id || !data) {
+      continue;
+    }
+
+    const tipo_hora = String(row.TIPO_HORA || '').trim();
+    if (safeTipo && tipo_hora !== safeTipo) {
+      continue;
+    }
+    if (safeColabId && colaborador_id !== safeColabId) {
+      continue;
+    }
+
+    const collab = collabById.get(String(colaborador_id));
+    if (!collab) {
+      continue;
+    }
+    const setorIdForCollab = String(collab.setor_id || '').trim();
+    if (allowedSector && setorIdForCollab !== allowedSector) {
+      continue;
+    }
+    if (safeSetorId && setorIdForCollab !== safeSetorId) {
+      continue;
+    }
+    if (setorIdForCollab && setorSet.size && !setorSet.has(setorIdForCollab)) {
+      continue;
+    }
+
+    rows.push({
+      id,
+      colaborador_id,
+      data,
+      quantidade_horas: Number(row.QUANTIDADE_HORAS || 0),
+      tipo_hora,
+      observacao: String(row.OBSERVACAO || '').trim(),
+      justificativa: String(row.JUSTIFICATIVA || '').trim(),
+      criado_por: String(row.CRIADO_POR || '').trim(),
+      data_registro: String(row.DATA_REGISTRO || '').trim()
+    });
+  }
+
+  rows.sort((a, b) => String(b.data).localeCompare(String(a.data)) || String(b.id).localeCompare(String(a.id)));
+  return rows;
+}
+
+function computePreviousMonth(month) {
+  const [y, m] = String(month).split('-').map((n) => Number(n));
+  if (!Number.isFinite(y) || !Number.isFinite(m)) {
+    return '';
+  }
+  const dt = new Date(Date.UTC(y, m - 1, 1));
+  dt.setUTCMonth(dt.getUTCMonth() - 1);
+  const yyyy = String(dt.getUTCFullYear()).padStart(4, '0');
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function ymdFromDateUtc(dt) {
+  const yyyy = String(dt.getUTCFullYear()).padStart(4, '0');
+  const mm = pad2(dt.getUTCMonth() + 1);
+  const dd = pad2(dt.getUTCDate());
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function addDaysUtc(dt, days) {
+  const copy = new Date(dt.getTime());
+  copy.setUTCDate(copy.getUTCDate() + Number(days || 0));
+  return copy;
+}
+
+function computeEasterSundayUtc(year) {
+  // Meeus/Jones/Butcher - calendário Gregoriano
+  const y = Number(year);
+  const a = y % 19;
+  const b = Math.floor(y / 100);
+  const c = y % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31); // 3=Mar, 4=Apr
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(y, month - 1, day));
+}
+
+function normalizeMunicipioUf(value) {
+  return normalizeText(String(value || '').replace(/['`]/g, ''));
+}
+
+function getDefaultMunicipalHolidaysForYear(municipioUf, year) {
+  const y = Number(year);
+  if (!Number.isFinite(y) || y < 1970 || y > 2100) {
+    return [];
+  }
+  const key = normalizeMunicipioUf(municipioUf);
+  if (!key) {
+    return [];
+  }
+
+  // Santa Bárbara d'Oeste - SP: 04/12 (Dia da Padroeira Santa Bárbara e fundação do município)
+  if (key === 'SANTA BARBARA D OESTE/SP' || key === 'SANTA BARBARA D OESTE SP') {
+    return [`${y}-12-04`];
+  }
+  return [];
+}
+
+function getBrazilHolidaySetUtc(year) {
+  const y = Number(year);
+  const set = new Set([
+    `${y}-01-01`, // Confraternização Universal
+    `${y}-04-21`, // Tiradentes
+    `${y}-05-01`, // Dia do Trabalho
+    `${y}-09-07`, // Independência
+    `${y}-10-12`, // Nossa Senhora Aparecida
+    `${y}-11-02`, // Finados
+    `${y}-11-15`, // Proclamação da República
+    `${y}-12-25`, // Natal
+    `${y}-07-09` // SP: Revolução Constitucionalista (Estado de SP)
+  ]);
+
+  const easter = computeEasterSundayUtc(y);
+  // Feriados móveis mais comuns (negócio): Carnaval (seg/ter), Paixão de Cristo, Corpus Christi
+  set.add(ymdFromDateUtc(addDaysUtc(easter, -48))); // Carnaval (segunda)
+  set.add(ymdFromDateUtc(addDaysUtc(easter, -47))); // Carnaval (terça)
+  set.add(ymdFromDateUtc(addDaysUtc(easter, -2))); // Paixão de Cristo (sexta-feira santa)
+  set.add(ymdFromDateUtc(addDaysUtc(easter, 60))); // Corpus Christi
+  return set;
+}
+
+function computeBusinessDaysInMonth(month, config) {
+  const safe = String(month || '').trim();
+  const match = safe.match(/^(\d{4})-(\d{2})$/);
+  if (!match) {
+    return 0;
+  }
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1; // 0-based
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+    return 0;
+  }
+
+  const first = new Date(Date.UTC(year, monthIndex, 1));
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0));
+  let count = 0;
+  for (let d = 1; d <= last.getUTCDate(); d += 1) {
+    const dt = new Date(Date.UTC(year, monthIndex, d));
+    const dow = dt.getUTCDay(); // 0=Dom, 6=Sáb
+    if (dow >= 1 && dow <= 5) {
+      count += 1;
+    }
+  }
+
+  const shouldDiscount = config ? config.descontar_feriados !== false : true;
+  if (!shouldDiscount) {
+    return count;
+  }
+
+  const holidaySet = getBrazilHolidaySetUtc(year);
+  getDefaultMunicipalHolidaysForYear(config && config.municipio_uf ? config.municipio_uf : '', year)
+    .forEach((ymd) => holidaySet.add(String(ymd || '').trim()));
+  const extras = (config && Array.isArray(config.feriados_extras)) ? config.feriados_extras : [];
+  extras.forEach((ymd) => holidaySet.add(String(ymd || '').trim()));
+
+  let discount = 0;
+  holidaySet.forEach((ymd) => {
+    if (!String(ymd).startsWith(`${safe}-`)) {
+      return;
+    }
+    const [_, mm, dd] = String(ymd).split('-');
+    const day = Number(dd);
+    if (!Number.isFinite(day) || day < 1 || day > 31) {
+      return;
+    }
+    const dt = new Date(Date.UTC(year, monthIndex, day));
+    const dow = dt.getUTCDay();
+    if (dow >= 1 && dow <= 5) {
+      discount += 1;
+    }
+  });
+
+  return Math.max(0, count - discount);
+}
+
+function computeRhKpisFromSnapshot(ctx, snapshot, filters) {
+  const config = snapshot && snapshot.config && typeof snapshot.config === 'object' ? snapshot.config : {};
+  const month = String(filters.month || '').trim();
+  const prevMonth = computePreviousMonth(month);
+
+  const rows = listRhHorasExtrasFromSnapshot(ctx, snapshot, filters);
+  const colaboradores = listRhColaboradoresFromSnapshot(ctx, snapshot);
+  const setores = listRhSetoresFromSnapshot(ctx, snapshot);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+  const setorById = new Map(setores.map((s) => [String(s.id), s]));
+
+  const totalHoras = rows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+  const diasSet = new Set(rows.map((r) => String(r.data || '').trim()).filter(Boolean));
+  const diasComLancamento = diasSet.size;
+  const diasTrabalhadosNoMes = computeBusinessDaysInMonth(month, config);
+  const mediaDiaria = diasTrabalhadosNoMes ? totalHoras / diasTrabalhadosNoMes : 0;
+  const colaboradoresNoPeriodo = new Set(rows.map((r) => String(r.colaborador_id))).size;
+
+  const horasPorSetor = new Map();
+  const horasPorColab = new Map();
+  rows.forEach((r) => {
+    const collab = collabById.get(String(r.colaborador_id));
+    if (!collab) {
+      return;
+    }
+    const setorId = String(collab.setor_id || '').trim();
+    const setorName = setorId && setorById.get(setorId) ? String(setorById.get(setorId).nome_setor || '').trim() : 'SEM SETOR';
+    horasPorSetor.set(setorName, (horasPorSetor.get(setorName) || 0) + (Number(r.quantidade_horas) || 0));
+    const collabName = String(collab.nome || '').trim();
+    horasPorColab.set(collabName, (horasPorColab.get(collabName) || 0) + (Number(r.quantidade_horas) || 0));
+  });
+
+  const porSetor = Array.from(horasPorSetor.entries())
+    .map(([setor, horas]) => ({ setor, horas }))
+    .sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  const rankingColaboradores = Array.from(horasPorColab.entries())
+    .map(([colaborador, horas]) => {
+      const margin = getRhMarginForHours(config, horas);
+      return { colaborador, horas, margem_percent: margin.percent, margem_faixa: margin.faixa };
+    })
+    .sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  const faixaCount = new Map();
+  let margemPonderada = 0;
+  rankingColaboradores.forEach((row) => {
+    const faixa = String(row.margem_faixa || '').trim() || '—';
+    faixaCount.set(faixa, (faixaCount.get(faixa) || 0) + 1);
+    margemPonderada += (Number(row.horas || 0) * Number(row.margem_percent || 0));
+  });
+  const margemMediaPonderada = totalHoras ? (margemPonderada / totalHoras) : 0;
+  const colaboradoresPorFaixa = Array.from(faixaCount.entries()).map(([faixa, colaboradoresCount]) => ({ faixa, colaboradores: colaboradoresCount }));
+
+  const limitePadrao = Number(config.limite_mensal_padrao || 40);
+  const alertas = [];
+  const byColabId = new Map();
+  rows.forEach((r) => {
+    const key = String(r.colaborador_id);
+    byColabId.set(key, (byColabId.get(key) || 0) + (Number(r.quantidade_horas) || 0));
+  });
+  byColabId.forEach((horas, colabId) => {
+    const collab = collabById.get(String(colabId));
+    const override = collab ? Number(String(collab.limite_mensal || '').replace(',', '.')) : NaN;
+    const limite = Number.isFinite(override) && override > 0 ? override : limitePadrao;
+    if (Number.isFinite(limite) && limite > 0 && horas > limite) {
+      alertas.push({
+        colaborador_id: colabId,
+        colaborador: collab ? String(collab.nome || '').trim() : colabId,
+        horas,
+        limite
+      });
+    }
+  });
+
+  let totalPrev = 0;
+  if (prevMonth) {
+    const prevRows = listRhHorasExtrasFromSnapshot(ctx, snapshot, { ...filters, month: prevMonth });
+    totalPrev = prevRows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+  }
+  const diff = totalHoras - totalPrev;
+  const pct = totalPrev ? (diff / totalPrev) * 100 : (totalHoras ? 100 : 0);
+  const comparacaoTexto = prevMonth
+    ? `Vs ${prevMonth}: ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} h (${pct.toFixed(1)}%)`
+    : '';
+
+  const evolucaoMensal = [];
+  let cursor = month;
+  for (let i = 0; i < 6; i += 1) {
+    if (!cursor) {
+      break;
+    }
+    const cursorRows = listRhHorasExtrasFromSnapshot(ctx, snapshot, { ...filters, month: cursor });
+    const cursorTotal = cursorRows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+    evolucaoMensal.push({ month: cursor, totalHoras: cursorTotal });
+    cursor = computePreviousMonth(cursor);
+  }
+  evolucaoMensal.reverse();
+
+  return {
+    month,
+    totalHoras,
+    mediaDiaria,
+    diasComLancamento,
+    diasTrabalhadosNoMes,
+    colaboradoresNoPeriodo,
+    totalRegistros: rows.length,
+    porSetor,
+    rankingColaboradores,
+    colaboradoresPorFaixa,
+    margemMediaPonderada,
+    alertas,
+    limiteTexto: `Limite padrão: ${limitePadrao}h/mês`,
+    comparacao: { prevMonth, totalPrev, diff, pct, texto: comparacaoTexto },
+    evolucaoMensal,
+    config
+  };
+}
+
+function computeRhAtrasosKpisFromSnapshot(ctx, snapshot, filters) {
+  const config = snapshot && snapshot.config && typeof snapshot.config === 'object' ? snapshot.config : {};
+  const month = String(filters.month || '').trim();
+  const prevMonth = computePreviousMonth(month);
+
+  const rows = listRhAtrasosFromSnapshot(ctx, snapshot, filters);
+  const colaboradores = listRhColaboradoresFromSnapshot(ctx, snapshot);
+  const setores = listRhSetoresFromSnapshot(ctx, snapshot);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+  const setorById = new Map(setores.map((s) => [String(s.id), s]));
+
+  const totalHoras = rows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+  const diasSet = new Set(rows.map((r) => String(r.data || '').trim()).filter(Boolean));
+  const diasComLancamento = diasSet.size;
+  const diasTrabalhadosNoMes = computeBusinessDaysInMonth(month, config);
+  const mediaDiaria = diasTrabalhadosNoMes ? totalHoras / diasTrabalhadosNoMes : 0;
+  const colaboradoresNoPeriodo = new Set(rows.map((r) => String(r.colaborador_id))).size;
+
+  const horasPorSetor = new Map();
+  const horasPorColab = new Map();
+  rows.forEach((r) => {
+    const collab = collabById.get(String(r.colaborador_id));
+    if (!collab) {
+      return;
+    }
+    const setorId = String(collab.setor_id || '').trim();
+    const setorName = setorId && setorById.get(setorId) ? String(setorById.get(setorId).nome_setor || '').trim() : 'SEM SETOR';
+    horasPorSetor.set(setorName, (horasPorSetor.get(setorName) || 0) + (Number(r.quantidade_horas) || 0));
+    const collabName = String(collab.nome || '').trim();
+    horasPorColab.set(collabName, (horasPorColab.get(collabName) || 0) + (Number(r.quantidade_horas) || 0));
+  });
+
+  const porSetor = Array.from(horasPorSetor.entries())
+    .map(([setor, horas]) => ({ setor, horas }))
+    .sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  const rankingColaboradores = Array.from(horasPorColab.entries())
+    .map(([colaborador, horas]) => ({ colaborador, horas }))
+    .sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  const alertas = [];
+  const byColabId = new Map();
+  rows.forEach((r) => {
+    const key = String(r.colaborador_id);
+    byColabId.set(key, (byColabId.get(key) || 0) + (Number(r.quantidade_horas) || 0));
+  });
+  byColabId.forEach((horas, colabId) => {
+    const collab = collabById.get(String(colabId));
+    const name = collab ? String(collab.nome || '').trim() : String(colabId);
+    if (horas >= 1) {
+      alertas.push({ colaborador: name, horas });
+    }
+  });
+  alertas.sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  let totalPrev = 0;
+  if (prevMonth) {
+    const prevRows = listRhAtrasosFromSnapshot(ctx, snapshot, { ...filters, month: prevMonth });
+    totalPrev = prevRows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+  }
+  const diff = totalHoras - totalPrev;
+  const pct = totalPrev ? (diff / totalPrev) * 100 : (totalHoras ? 100 : 0);
+  const comparacaoTexto = prevMonth
+    ? `Vs ${prevMonth}: ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} h (${pct.toFixed(1)}%)`
+    : '';
+
+  const evolucaoMensal = [];
+  let cursor = month;
+  for (let i = 0; i < 6; i += 1) {
+    if (!cursor) {
+      break;
+    }
+    const cursorRows = listRhAtrasosFromSnapshot(ctx, snapshot, { ...filters, month: cursor });
+    const cursorTotal = cursorRows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+    evolucaoMensal.push({ month: cursor, totalHoras: cursorTotal });
+    cursor = computePreviousMonth(cursor);
+  }
+  evolucaoMensal.reverse();
+
+  return {
+    month,
+    totalHoras,
+    mediaDiaria,
+    diasComLancamento,
+    diasTrabalhadosNoMes,
+    colaboradoresNoPeriodo,
+    totalRegistros: rows.length,
+    porSetor,
+    rankingColaboradores,
+    alertas,
+    comparacao: { prevMonth, totalPrev, diff, pct, texto: comparacaoTexto },
+    evolucaoMensal,
+    config
+  };
+}
+
+function computeRhKpis(ctx, workbook, filters) {
+  const config = getRhConfig(workbook);
+  const month = String(filters.month || '').trim();
+  const prevMonth = computePreviousMonth(month);
+
+  const rows = listRhHorasExtras(ctx, workbook, filters);
+  const colaboradores = listRhColaboradores(ctx, workbook);
+  const setores = listRhSetores(ctx, workbook);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+  const setorById = new Map(setores.map((s) => [String(s.id), s]));
+
+  const totalHoras = rows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+  const diasSet = new Set(rows.map((r) => String(r.data || '').trim()).filter(Boolean));
+  const diasComLancamento = diasSet.size;
+  const diasTrabalhadosNoMes = computeBusinessDaysInMonth(month, config);
+  const mediaDiaria = diasTrabalhadosNoMes ? totalHoras / diasTrabalhadosNoMes : 0;
+  const colaboradoresNoPeriodo = new Set(rows.map((r) => String(r.colaborador_id))).size;
+
+  const horasPorSetor = new Map();
+  const horasPorColab = new Map();
+  rows.forEach((r) => {
+    const collab = collabById.get(String(r.colaborador_id));
+    if (!collab) {
+      return;
+    }
+    const setorId = String(collab.setor_id || '').trim();
+    const setorName = setorId && setorById.get(setorId) ? String(setorById.get(setorId).nome_setor || '').trim() : 'SEM SETOR';
+    horasPorSetor.set(setorName, (horasPorSetor.get(setorName) || 0) + (Number(r.quantidade_horas) || 0));
+    const collabName = String(collab.nome || '').trim();
+    horasPorColab.set(collabName, (horasPorColab.get(collabName) || 0) + (Number(r.quantidade_horas) || 0));
+  });
+
+  const porSetor = Array.from(horasPorSetor.entries())
+    .map(([setor, horas]) => ({ setor, horas }))
+    .sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  const rankingColaboradores = Array.from(horasPorColab.entries())
+    .map(([colaborador, horas]) => {
+      const margin = getRhMarginForHours(config, horas);
+      return { colaborador, horas, margem_percent: margin.percent, margem_faixa: margin.faixa };
+    })
+    .sort((a, b) => Number(b.horas) - Number(a.horas));
+
+  const faixaCount = new Map();
+  let margemPonderada = 0;
+  rankingColaboradores.forEach((row) => {
+    const faixa = String(row.margem_faixa || '').trim() || '—';
+    faixaCount.set(faixa, (faixaCount.get(faixa) || 0) + 1);
+    margemPonderada += (Number(row.horas || 0) * Number(row.margem_percent || 0));
+  });
+  const margemMediaPonderada = totalHoras ? (margemPonderada / totalHoras) : 0;
+  const colaboradoresPorFaixa = Array.from(faixaCount.entries()).map(([faixa, colaboradores]) => ({ faixa, colaboradores }));
+
+  const limitePadrao = Number(config.limite_mensal_padrao || 40);
+  const alertas = [];
+  const byColabId = new Map();
+  rows.forEach((r) => {
+    const key = String(r.colaborador_id);
+    byColabId.set(key, (byColabId.get(key) || 0) + (Number(r.quantidade_horas) || 0));
+  });
+  byColabId.forEach((horas, colabId) => {
+    const collab = collabById.get(String(colabId));
+    const override = collab ? Number(String(collab.limite_mensal || '').replace(',', '.')) : NaN;
+    const limite = Number.isFinite(override) && override > 0 ? override : limitePadrao;
+    if (Number.isFinite(limite) && limite > 0 && horas > limite) {
+      alertas.push({
+        colaborador_id: colabId,
+        colaborador: collab ? String(collab.nome || '').trim() : colabId,
+        horas,
+        limite
+      });
+    }
+  });
+
+  let totalPrev = 0;
+  if (prevMonth) {
+    const prevRows = listRhHorasExtras(ctx, workbook, { ...filters, month: prevMonth });
+    totalPrev = prevRows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+  }
+  const diff = totalHoras - totalPrev;
+  const pct = totalPrev ? (diff / totalPrev) * 100 : (totalHoras ? 100 : 0);
+  const comparacaoTexto = prevMonth
+    ? `Vs ${prevMonth}: ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} h (${pct.toFixed(1)}%)`
+    : '';
+
+  const evolucaoMensal = [];
+  let cursor = month;
+  for (let i = 0; i < 6; i += 1) {
+    if (!cursor) {
+      break;
+    }
+    const cursorRows = listRhHorasExtras(ctx, workbook, { ...filters, month: cursor });
+    const cursorTotal = cursorRows.reduce((sum, r) => sum + (Number(r.quantidade_horas) || 0), 0);
+    evolucaoMensal.push({ month: cursor, totalHoras: cursorTotal });
+    cursor = computePreviousMonth(cursor);
+  }
+  evolucaoMensal.reverse();
+
+  return {
+    month,
+    totalHoras,
+    mediaDiaria,
+    diasComLancamento,
+    diasTrabalhadosNoMes,
+    colaboradoresNoPeriodo,
+    totalRegistros: rows.length,
+    porSetor,
+    rankingColaboradores,
+    colaboradoresPorFaixa,
+    margemMediaPonderada,
+    alertas,
+    limiteTexto: `Limite padrão: ${limitePadrao}h/mês`,
+    comparacao: { prevMonth, totalPrev, diff, pct, texto: comparacaoTexto },
+    evolucaoMensal,
+    config
+  };
+}
+
+function appendRhAudit(workbook, { username, action, entity, entityId, before, after }) {
+  const aoa = readSheetAoa(workbook, 'AUDIT_LOG');
+  const next = Array.isArray(aoa) && aoa.length ? [...aoa] : [[
+    'ID',
+    'DATA_HORA',
+    'USERNAME',
+    'ACTION',
+    'ENTITY',
+    'ENTITY_ID',
+    'BEFORE_JSON',
+    'AFTER_JSON'
+  ]];
+  next.push([
+    String(generateRhId()),
+    new Date().toISOString(),
+    normalizeUsername(username),
+    String(action || '').trim(),
+    String(entity || '').trim(),
+    String(entityId || '').trim(),
+    before ? JSON.stringify(before) : '',
+    after ? JSON.stringify(after) : ''
+  ]);
+  writeSheetAoa(workbook, 'AUDIT_LOG', next);
+}
+
+function getHeaderFromAoa(aoa, defaultHeader) {
+  const headerRow = Array.isArray(aoa && aoa[0]) ? aoa[0] : null;
+  if (headerRow && headerRow.length) {
+    return headerRow.map((h) => String(h || '').trim().toUpperCase());
+  }
+  return (defaultHeader || []).map((h) => String(h || '').trim().toUpperCase());
+}
+
+function objectsToAoa(headers, objects) {
+  const safeHeaders = (headers || []).map((h) => String(h || '').trim().toUpperCase()).filter(Boolean);
+  const rows = Array.isArray(objects) ? objects : [];
+  const aoa = [safeHeaders];
+  rows.forEach((obj) => {
+    const row = safeHeaders.map((h) => (obj && Object.prototype.hasOwnProperty.call(obj, h) ? obj[h] : ''));
+    aoa.push(row);
+  });
+  return aoa;
+}
+
+function upsertRhSetor({ username, id, nome_setor, gestor_responsavel, centro_custo }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const aoa = readSheetAoa(workbook, 'SETORES');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'NOME_SETOR',
+    'GESTOR_RESPONSAVEL',
+    'CENTRO_CUSTO',
+    'CREATED_AT',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+
+  const safeId = String(id || '').trim();
+  const safeNome = String(nome_setor || '').trim();
+  if (!safeNome) {
+    throw new Error('Nome do setor obrigatório.');
+  }
+  const safeGestor = String(gestor_responsavel || '').trim();
+  const safeCc = String(centro_custo || '').trim();
+
+  let before = null;
+  let target = null;
+  if (safeId) {
+    target = rows.find((r) => String(r.ID || '').trim() === safeId) || null;
+    if (target) {
+      before = { ...target };
+    }
+  }
+  if (!target) {
+    target = {
+      ID: safeId || String(generateRhId()),
+      CREATED_AT: now,
+      UPDATED_AT: now,
+      DELETED_AT: ''
+    };
+    rows.push(target);
+  }
+
+  target.NOME_SETOR = safeNome;
+  target.GESTOR_RESPONSAVEL = safeGestor;
+  target.CENTRO_CUSTO = safeCc;
+  target.UPDATED_AT = now;
+  if (String(target.DELETED_AT || '').trim()) {
+    target.DELETED_AT = '';
+  }
+
+  writeSheetAoa(workbook, 'SETORES', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: before ? 'SETORES_UPDATE' : 'SETORES_CREATE',
+    entity: 'SETORES',
+    entityId: target.ID,
+    before,
+    after: target
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { setor: { id: String(target.ID), nome_setor: safeNome, gestor_responsavel: safeGestor, centro_custo: safeCc } };
+}
+
+function deleteRhSetor({ username, id }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const aoa = readSheetAoa(workbook, 'SETORES');
+  const header = getHeaderFromAoa(aoa, ['ID', 'NOME_SETOR', 'GESTOR_RESPONSAVEL', 'CENTRO_CUSTO', 'CREATED_AT', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const safeId = String(id || '').trim();
+  if (!safeId) {
+    throw new Error('ID do setor obrigatório.');
+  }
+  const target = rows.find((r) => String(r.ID || '').trim() === safeId);
+  if (!target) {
+    throw new Error('Setor não encontrado.');
+  }
+  const before = { ...target };
+  target.DELETED_AT = now;
+  target.UPDATED_AT = now;
+  writeSheetAoa(workbook, 'SETORES', objectsToAoa(header, rows));
+  appendRhAudit(workbook, { username: ctx.username, action: 'SETORES_DELETE', entity: 'SETORES', entityId: safeId, before, after: target });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function upsertRhColaborador({ username, id, nome, matricula, setor_id, cargo, status, data_admissao, limite_mensal }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const aoa = readSheetAoa(workbook, 'COLABORADORES');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'NOME',
+    'MATRICULA',
+    'SETOR_ID',
+    'CARGO',
+    'STATUS',
+    'DATA_ADMISSAO',
+    'LIMITE_MENSAL',
+    'CREATED_AT',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+
+  const safeId = String(id || '').trim();
+  const safeNome = String(nome || '').trim();
+  if (!safeNome) {
+    throw new Error('Nome do colaborador obrigatório.');
+  }
+  const safeMat = String(matricula || '').trim();
+  const safeSetor = String(setor_id || '').trim();
+  const safeCargo = String(cargo || '').trim();
+  const safeStatus = String(status || '').trim().toLowerCase() === 'inativo' ? 'inativo' : 'ativo';
+  const safeAd = String(data_admissao || '').trim();
+  const safeLim = String(limite_mensal || '').trim();
+
+  let before = null;
+  let target = null;
+  if (safeId) {
+    target = rows.find((r) => String(r.ID || '').trim() === safeId) || null;
+    if (target) {
+      before = { ...target };
+    }
+  }
+  if (!target) {
+    target = {
+      ID: safeId || String(generateRhId()),
+      CREATED_AT: now,
+      UPDATED_AT: now,
+      DELETED_AT: ''
+    };
+    rows.push(target);
+  }
+
+  target.NOME = safeNome;
+  target.MATRICULA = safeMat;
+  target.SETOR_ID = safeSetor;
+  target.CARGO = safeCargo;
+  target.STATUS = safeStatus;
+  target.DATA_ADMISSAO = safeAd;
+  target.LIMITE_MENSAL = safeLim;
+  target.UPDATED_AT = now;
+  if (String(target.DELETED_AT || '').trim()) {
+    target.DELETED_AT = '';
+  }
+
+  writeSheetAoa(workbook, 'COLABORADORES', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: before ? 'COLABORADORES_UPDATE' : 'COLABORADORES_CREATE',
+    entity: 'COLABORADORES',
+    entityId: target.ID,
+    before,
+    after: target
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { colaborador: { id: String(target.ID), nome: safeNome } };
+}
+
+function toggleRhColaboradorStatus({ username, id }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const aoa = readSheetAoa(workbook, 'COLABORADORES');
+  const header = getHeaderFromAoa(aoa, ['ID', 'NOME', 'MATRICULA', 'SETOR_ID', 'CARGO', 'STATUS', 'DATA_ADMISSAO', 'CREATED_AT', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const safeId = String(id || '').trim();
+  const target = rows.find((r) => String(r.ID || '').trim() === safeId);
+  if (!target) {
+    throw new Error('Colaborador não encontrado.');
+  }
+  const before = { ...target };
+  const current = String(target.STATUS || '').trim().toLowerCase();
+  target.STATUS = current === 'inativo' ? 'ativo' : 'inativo';
+  target.UPDATED_AT = now;
+  writeSheetAoa(workbook, 'COLABORADORES', objectsToAoa(header, rows));
+  appendRhAudit(workbook, { username: ctx.username, action: 'COLABORADORES_TOGGLE', entity: 'COLABORADORES', entityId: safeId, before, after: target });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true, status: target.STATUS };
+}
+
+function deleteRhColaborador({ username, id }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const aoa = readSheetAoa(workbook, 'COLABORADORES');
+  const header = getHeaderFromAoa(aoa, ['ID', 'NOME', 'MATRICULA', 'SETOR_ID', 'CARGO', 'STATUS', 'DATA_ADMISSAO', 'CREATED_AT', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const safeId = String(id || '').trim();
+  const target = rows.find((r) => String(r.ID || '').trim() === safeId);
+  if (!target) {
+    throw new Error('Colaborador não encontrado.');
+  }
+  const before = { ...target };
+  target.DELETED_AT = now;
+  target.UPDATED_AT = now;
+  writeSheetAoa(workbook, 'COLABORADORES', objectsToAoa(header, rows));
+  appendRhAudit(workbook, { username: ctx.username, action: 'COLABORADORES_DELETE', entity: 'COLABORADORES', entityId: safeId, before, after: target });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function upsertRhHoraExtra({ username, id, colaborador_id, data, quantidade_horas, tipo_hora, observacao, justificativa }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const config = getRhConfig(workbook);
+  const now = new Date().toISOString();
+
+  const safeColabId = String(colaborador_id || '').trim();
+  const safeData = String(data || '').trim();
+  const safeTipo = String(tipo_hora || '').trim() || '50%';
+  const safeObs = String(observacao || '').trim();
+  const safeJust = String(justificativa || '').trim();
+  const safeQtd = Number(quantidade_horas || 0);
+  if (!safeColabId) {
+    throw new Error('Colaborador obrigatório.');
+  }
+  if (!safeData || !/^\d{4}-\d{2}-\d{2}$/.test(safeData)) {
+    throw new Error('Data inválida.');
+  }
+  if (!Number.isFinite(safeQtd) || safeQtd <= 0) {
+    throw new Error('Quantidade de horas inválida.');
+  }
+  const limitJust = Number(config.justificativa_acima_horas || 2);
+  if (Number.isFinite(limitJust) && safeQtd > limitJust && !safeJust) {
+    throw new Error(`Justificativa obrigatória acima de ${limitJust}h.`);
+  }
+
+  const aoa = readSheetAoa(workbook, 'HORAS_EXTRAS');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'COLABORADOR_ID',
+    'DATA',
+    'QUANTIDADE_HORAS',
+    'TIPO_HORA',
+    'OBSERVACAO',
+    'JUSTIFICATIVA',
+    'CRIADO_POR',
+    'DATA_REGISTRO',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+
+  const existingByKey = rows.find((r) => (
+    !String(r.DELETED_AT || '').trim()
+    && String(r.COLABORADOR_ID || '').trim() === safeColabId
+    && String(r.DATA || '').trim() === safeData
+    && String(r.TIPO_HORA || '').trim() === safeTipo
+  )) || null;
+
+  const safeId = String(id || '').trim();
+  let before = null;
+  let target = null;
+  if (safeId) {
+    target = rows.find((r) => String(r.ID || '').trim() === safeId) || null;
+    if (target) {
+      before = { ...target };
+    }
+  }
+  if (!safeId && existingByKey) {
+    target = existingByKey;
+    before = { ...existingByKey };
+  }
+  if (safeId && existingByKey && String(existingByKey.ID || '').trim() !== safeId) {
+    throw new Error('Já existe um lançamento de H.E para este colaborador/data/tipo.');
+  }
+  if (!target) {
+    target = {
+      ID: safeId || String(generateRhId()),
+      CRIADO_POR: ctx.username,
+      DATA_REGISTRO: now,
+      UPDATED_AT: now,
+      DELETED_AT: ''
+    };
+    rows.push(target);
+  }
+
+  target.COLABORADOR_ID = safeColabId;
+  target.DATA = safeData;
+  target.QUANTIDADE_HORAS = safeQtd;
+  target.TIPO_HORA = safeTipo;
+  target.OBSERVACAO = safeObs;
+  target.JUSTIFICATIVA = safeJust;
+  target.UPDATED_AT = now;
+  if (String(target.DELETED_AT || '').trim()) {
+    target.DELETED_AT = '';
+  }
+
+  writeSheetAoa(workbook, 'HORAS_EXTRAS', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: before ? 'HORAS_EXTRAS_UPDATE' : 'HORAS_EXTRAS_CREATE',
+    entity: 'HORAS_EXTRAS',
+    entityId: target.ID,
+    before,
+    after: target
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true, id: String(target.ID) };
+}
+
+function upsertRhAtraso({ username, id, colaborador_id, data, quantidade_horas, observacao }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+
+  const safeColabId = String(colaborador_id || '').trim();
+  const safeData = String(data || '').trim();
+  const safeObs = String(observacao || '').trim();
+  const safeQtd = Number(quantidade_horas || 0);
+  if (!safeColabId) {
+    throw new Error('Colaborador obrigatório.');
+  }
+  if (!safeData || !/^\d{4}-\d{2}-\d{2}$/.test(safeData)) {
+    throw new Error('Data inválida.');
+  }
+  if (!Number.isFinite(safeQtd) || safeQtd <= 0) {
+    throw new Error('Quantidade de horas inválida.');
+  }
+
+  const aoa = readSheetAoa(workbook, 'ATRASOS');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'COLABORADOR_ID',
+    'DATA',
+    'QUANTIDADE_HORAS',
+    'OBSERVACAO',
+    'CRIADO_POR',
+    'DATA_REGISTRO',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+
+  const existingByKey = rows.find((r) => (
+    !String(r.DELETED_AT || '').trim()
+    && String(r.COLABORADOR_ID || '').trim() === safeColabId
+    && String(r.DATA || '').trim() === safeData
+  )) || null;
+
+  const safeId = String(id || '').trim();
+  let before = null;
+  let target = null;
+  if (safeId) {
+    target = rows.find((r) => String(r.ID || '').trim() === safeId) || null;
+    if (target) {
+      before = { ...target };
+    }
+  }
+  if (!safeId && existingByKey) {
+    target = existingByKey;
+    before = { ...existingByKey };
+  }
+  if (safeId && existingByKey && String(existingByKey.ID || '').trim() !== safeId) {
+    throw new Error('Já existe um atraso lançado para este colaborador/data.');
+  }
+  if (!target) {
+    target = {
+      ID: safeId || String(generateRhId()),
+      CRIADO_POR: ctx.username,
+      DATA_REGISTRO: now,
+      UPDATED_AT: now,
+      DELETED_AT: ''
+    };
+    rows.push(target);
+  }
+
+  target.COLABORADOR_ID = safeColabId;
+  target.DATA = safeData;
+  target.QUANTIDADE_HORAS = safeQtd;
+  target.OBSERVACAO = safeObs;
+  target.UPDATED_AT = now;
+  if (String(target.DELETED_AT || '').trim()) {
+    target.DELETED_AT = '';
+  }
+
+  writeSheetAoa(workbook, 'ATRASOS', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: before ? 'ATRASOS_UPDATE' : 'ATRASOS_CREATE',
+    entity: 'ATRASOS',
+    entityId: target.ID,
+    before,
+    after: target
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true, id: String(target.ID) };
+}
+
+function parseTimeToMinutes(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  const m = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    return null;
+  }
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return null;
+  }
+  return (hh * 60) + mm;
+}
+
+function formatMinutesToHoursDecimal(totalMinutes) {
+  const mins = Number(totalMinutes);
+  if (!Number.isFinite(mins) || mins <= 0) {
+    return 0;
+  }
+  return Math.round((mins / 60) * 100) / 100;
+}
+
+function formatMinutesToHoursHm(totalMinutes) {
+  const mins = Number(totalMinutes);
+  if (!Number.isFinite(mins) || mins <= 0) {
+    return '';
+  }
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+function computeHeTotalMinutes(hora_inicio, hora_fim) {
+  const start = parseTimeToMinutes(hora_inicio);
+  const end = parseTimeToMinutes(hora_fim);
+  if (start == null || end == null) {
+    return null;
+  }
+  if (end <= start) {
+    return null;
+  }
+  return end - start;
+}
+
+function computeHeTotalHours(hora_inicio, hora_fim) {
+  const totalMinutes = computeHeTotalMinutes(hora_inicio, hora_fim);
+  if (totalMinutes == null) {
+    return null;
+  }
+  return formatMinutesToHoursDecimal(totalMinutes);
+}
+
+function formatDateToYmdLocal(date) {
+  const dt = date instanceof Date ? date : new Date();
+  if (Number.isNaN(dt.getTime())) {
+    return '';
+  }
+  const yyyy = String(dt.getFullYear()).padStart(4, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getRhSolicitacoesHeSheet(workbook) {
+  const aoa = readSheetAoa(workbook, 'SOLICITACOES_HE');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'NUMERO_DOCUMENTO',
+    'DATA_SOLICITACAO',
+    'DATA_HE',
+    'COLABORADOR_ID',
+    'NOME_COLABORADOR',
+    'SETOR',
+    'FINALIDADE',
+    'HORA_INICIO',
+    'HORA_FIM',
+    'TOTAL_HORAS',
+    'SOLICITANTE',
+    'DATA_CRIACAO',
+    'ULTIMA_ATUALIZACAO',
+    'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  return { aoa, header, rows };
+}
+
+function nextRhSolicitacaoHeId(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  let max = 0;
+  list.forEach((r) => {
+    const raw = String(r.ID ?? '').trim();
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > max) {
+      max = n;
+    }
+  });
+  return max + 1;
+}
+
+function nextRhSolicitacaoHeNumeroDocumento(rows, year) {
+  const yyyy = Number(year);
+  if (!Number.isFinite(yyyy) || yyyy < 2000 || yyyy > 2100) {
+    throw new Error('Ano inválido para numeração.');
+  }
+  const prefix = `HE-${yyyy}-`;
+  let maxSeq = 0;
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const doc = String(r.NUMERO_DOCUMENTO || '').trim();
+    if (!doc.startsWith(prefix)) {
+      return;
+    }
+    const seq = Number(doc.slice(prefix.length));
+    if (Number.isFinite(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  });
+  const next = maxSeq + 1;
+  return `${prefix}${String(next).padStart(4, '0')}`;
+}
+
+function canEditRhSolicitacaoRow(ctx, row) {
+  if (ctx && ctx.canEdit) {
+    return true;
+  }
+  const owner = normalizeUsername(row && row.SOLICITANTE ? row.SOLICITANTE : '');
+  return owner && ctx && normalizeUsername(ctx.username) === owner;
+}
+
+function upsertRhSolicitacaoHe(payload) {
+  const ctx = ensureRhAccess(String(payload && payload.username || '').trim(), { requireEdit: false });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const todayYmd = formatDateToYmdLocal(new Date());
+
+  const safeId = String(payload && payload.id ? payload.id : '').trim();
+  const data_he = String(payload && payload.data_he ? payload.data_he : '').trim();
+  const colaborador_id = String(payload && payload.colaborador_id ? payload.colaborador_id : '').trim();
+  const nome_colaborador = String(payload && payload.nome_colaborador ? payload.nome_colaborador : '').trim();
+  const setor = String(payload && payload.setor ? payload.setor : '').trim();
+  const finalidade = String(payload && payload.finalidade ? payload.finalidade : '').trim();
+  const hora_inicio = String(payload && payload.hora_inicio ? payload.hora_inicio : '').trim();
+  const hora_fim = String(payload && payload.hora_fim ? payload.hora_fim : '').trim();
+  const solicitante = normalizeUsername(ctx.username);
+
+  if (!data_he || !/^\d{4}-\d{2}-\d{2}$/.test(data_he)) {
+    throw new Error('Informe a data da H.E.');
+  }
+  if (!colaborador_id) {
+    throw new Error('Selecione o colaborador.');
+  }
+  if (!nome_colaborador) {
+    throw new Error('Nome do colaborador obrigatório.');
+  }
+  if (!setor) {
+    throw new Error('Setor obrigatório.');
+  }
+  if (!finalidade) {
+    throw new Error('Informe a finalidade.');
+  }
+  const total_horas = computeHeTotalHours(hora_inicio, hora_fim);
+  if (total_horas == null || !Number.isFinite(total_horas) || total_horas <= 0) {
+    throw new Error('Horário inválido (início/fim).');
+  }
+
+  const { header, rows } = getRhSolicitacoesHeSheet(workbook);
+
+  // Anti-duplicidade: mesmo colaborador + data + inicio + fim
+  const dup = rows.find((r) => (
+    !String(r.DELETED_AT || '').trim()
+    && String(r.COLABORADOR_ID || '').trim() === colaborador_id
+    && String(r.DATA_HE || '').trim() === data_he
+    && String(r.HORA_INICIO || '').trim() === hora_inicio
+    && String(r.HORA_FIM || '').trim() === hora_fim
+  )) || null;
+  if (!safeId && dup) {
+    throw new Error('Já existe uma solicitação com o mesmo colaborador/data/horário.');
+  }
+  if (safeId && dup && String(dup.ID || '').trim() !== safeId) {
+    throw new Error('Já existe outra solicitação com o mesmo colaborador/data/horário.');
+  }
+
+  let target = null;
+  let before = null;
+  if (safeId) {
+    target = rows.find((r) => String(r.ID || '').trim() === safeId) || null;
+    if (!target) {
+      throw new Error('Solicitação não encontrada.');
+    }
+    if (!canEditRhSolicitacaoRow(ctx, target)) {
+      throw new Error('Você não tem permissão para editar esta solicitação.');
+    }
+    before = { ...target };
+  }
+
+  const isCreate = !target;
+  if (!target) {
+    const nextId = nextRhSolicitacaoHeId(rows);
+    const year = Number(String(todayYmd).slice(0, 4));
+    const numero_documento = nextRhSolicitacaoHeNumeroDocumento(rows, year);
+    target = {
+      ID: String(nextId),
+      NUMERO_DOCUMENTO: numero_documento,
+      DATA_SOLICITACAO: todayYmd,
+      SOLICITANTE: solicitante,
+      DATA_CRIACAO: now,
+      ULTIMA_ATUALIZACAO: now,
+      DELETED_AT: ''
+    };
+    rows.push(target);
+  }
+
+  target.DATA_HE = data_he;
+  target.COLABORADOR_ID = colaborador_id;
+  target.NOME_COLABORADOR = nome_colaborador;
+  target.SETOR = setor;
+  target.FINALIDADE = finalidade;
+  target.HORA_INICIO = hora_inicio;
+  target.HORA_FIM = hora_fim;
+  target.TOTAL_HORAS = Number(total_horas);
+  if (!target.SOLICITANTE) {
+    target.SOLICITANTE = solicitante;
+  }
+  if (!target.DATA_CRIACAO) {
+    target.DATA_CRIACAO = now;
+  }
+  target.ULTIMA_ATUALIZACAO = now;
+  if (String(target.DELETED_AT || '').trim()) {
+    target.DELETED_AT = '';
+  }
+
+  writeSheetAoa(workbook, 'SOLICITACOES_HE', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: isCreate ? 'SOLICITACOES_HE_CREATE' : 'SOLICITACOES_HE_UPDATE',
+    entity: 'SOLICITACOES_HE',
+    entityId: String(target.ID),
+    before,
+    after: target
+  });
+  writeWorkbookFile(workbook, filePath);
+
+  return {
+    ok: true,
+    row: {
+      id: String(target.ID),
+      numero_documento: String(target.NUMERO_DOCUMENTO || '').trim(),
+      data_solicitacao: String(target.DATA_SOLICITACAO || '').trim(),
+      data_he: String(target.DATA_HE || '').trim(),
+      colaborador_id: String(target.COLABORADOR_ID || '').trim(),
+      nome_colaborador: String(target.NOME_COLABORADOR || '').trim(),
+      setor: String(target.SETOR || '').trim(),
+      finalidade: String(target.FINALIDADE || '').trim(),
+      hora_inicio: String(target.HORA_INICIO || '').trim(),
+      hora_fim: String(target.HORA_FIM || '').trim(),
+      total_horas: Number(target.TOTAL_HORAS || 0),
+      solicitante: String(target.SOLICITANTE || '').trim(),
+      data_criacao: String(target.DATA_CRIACAO || '').trim(),
+      ultima_atualizacao: String(target.ULTIMA_ATUALIZACAO || '').trim()
+    }
+  };
+}
+
+function formatYmdToPtBr(ymd) {
+  const text = String(ymd || '').trim();
+  const m = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) {
+    return text;
+  }
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getRhSolicitacaoHePdfDir() {
+  const fiscalRoot = getFiscalRoot();
+  const dir = path.join(fiscalRoot, 'PartsSeals', 'Solicitação de Horas Extras');
+  ensureDirSync(dir);
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+  } catch (error) {
+    throw new Error(`Sem permissão de escrita em: ${dir}`);
+  }
+  return dir;
+}
+
+function getRhSolicitacaoHePdfPath(numeroDocumento) {
+  const safe = String(numeroDocumento || '').trim();
+  if (!safe) {
+    throw new Error('Número do documento inválido.');
+  }
+  const dir = getRhSolicitacaoHePdfDir();
+  return path.join(dir, `SOLICITACAO_${safe}.pdf`);
+}
+
+function getPartsSealsLogoDataUrl() {
+  try {
+    const logoPath = path.join(app.getAppPath(), 'img', 'LogoParts.png');
+    if (!fs.existsSync(logoPath)) {
+      return '';
+    }
+    const buf = fs.readFileSync(logoPath);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  } catch (error) {
+    return '';
+  }
+}
+
+function buildRhSolicitacaoHePdfHtml(row) {
+  const logoUrl = getPartsSealsLogoDataUrl();
+  const numero = escapeHtml(row.numero_documento);
+  const dataSolic = escapeHtml(formatYmdToPtBr(row.data_solicitacao));
+  const dataHe = escapeHtml(formatYmdToPtBr(row.data_he));
+  const solicitante = escapeHtml(row.solicitante);
+  const colaborador = escapeHtml(row.nome_colaborador);
+  const setor = escapeHtml(row.setor);
+  const inicio = escapeHtml(row.hora_inicio);
+  const fim = escapeHtml(row.hora_fim);
+  const totalMinutes = computeHeTotalMinutes(row.hora_inicio, row.hora_fim);
+  const totalHm = totalMinutes != null ? formatMinutesToHoursHm(totalMinutes) : '';
+  const totalFallback = formatMinutesToHoursHm(Math.round(Number(row.total_horas || 0) * 60));
+  const total = escapeHtml(totalHm || totalFallback || '');
+  const finalidade = escapeHtml(row.finalidade).replace(/\n/g, '<br />');
+
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solicitação de Horas Extras</title>
+    <style>
+      :root { --text:#111827; --muted:#6b7280; --border:#e5e7eb; --accent:#7f1d1d; }
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; color: var(--text); margin: 0; padding: 36px 40px; }
+      .top { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+      .logo { height: 46px; object-fit: contain; }
+      .title { text-align:center; flex: 1; }
+      .title h1 { margin: 0; font-size: 18px; letter-spacing: 0.6px; }
+      .title h2 { margin: 6px 0 0; font-size: 12px; color: var(--muted); font-weight: 600; }
+      .pill { border: 1px solid var(--border); border-left: 5px solid var(--accent); padding: 10px 12px; border-radius: 12px; }
+      .meta { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+      .meta .k { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.2px; }
+      .meta .v { margin-top: 2px; font-size: 12px; font-weight: 700; }
+      .section { margin-top: 16px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+      .section .head { background: #f9fafb; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 800; }
+      .section .body { padding: 12px; display:grid; gap: 10px; }
+      .row { display:grid; grid-template-columns: 160px 1fr; gap: 10px; }
+      .row .label { color: var(--muted); font-size: 12px; font-weight: 700; }
+      .row .value { font-size: 12px; font-weight: 700; }
+      .finalidade { padding: 10px 12px; border: 1px dashed var(--border); border-radius: 12px; background:#ffffff; line-height: 1.35; }
+      .sign { margin-top: 22px; display:grid; gap: 14px; }
+      .line { display:grid; grid-template-columns: 1fr; gap: 6px; }
+      .line .lbl { color: var(--muted); font-size: 12px; font-weight: 700; }
+      .line .sig { border-bottom: 1px solid #111827; height: 18px; }
+      .footerNote { margin-top: 12px; color: var(--muted); font-size: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div style="width: 160px;">
+        ${logoUrl ? `<img class="logo" src="${logoUrl}" alt="PartsSeals" />` : ''}
+      </div>
+      <div class="title">
+        <h1>SOLICITAÇÃO DE HORAS EXTRAS</h1>
+        <h2>${numero}</h2>
+      </div>
+      <div style="width: 160px;"></div>
+    </div>
+
+    <div class="meta">
+      <div class="pill">
+        <div class="k">NÚMERO DO DOCUMENTO</div>
+        <div class="v">${numero}</div>
+      </div>
+      <div class="pill">
+        <div class="k">DATA DA SOLICITAÇÃO</div>
+        <div class="v">${dataSolic}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="head">INFORMAÇÕES DA SOLICITAÇÃO</div>
+      <div class="body">
+        <div class="row"><div class="label">Solicitante</div><div class="value">${solicitante}</div></div>
+        <div class="row"><div class="label">Colaborador</div><div class="value">${colaborador}</div></div>
+        <div class="row"><div class="label">Setor</div><div class="value">${setor}</div></div>
+        <div class="row"><div class="label">Data da H.E</div><div class="value">${dataHe}</div></div>
+        <div class="row"><div class="label">Horário de Início</div><div class="value">${inicio}</div></div>
+        <div class="row"><div class="label">Horário de Término</div><div class="value">${fim}</div></div>
+        <div class="row"><div class="label">Total de Horas</div><div class="value">${total}</div></div>
+        <div class="row"><div class="label">Finalidade</div><div class="value"></div></div>
+        <div class="finalidade">${finalidade || '—'}</div>
+      </div>
+    </div>
+
+    <div class="sign">
+      <div class="row"><div class="label">Data</div><div class="value">____ / ____ / ______</div></div>
+      <div class="line"><div class="lbl">Ciência do Colaborador</div><div class="sig"></div></div>
+      <div class="line"><div class="lbl">Aprovação Diretoria</div><div class="sig"></div></div>
+    </div>
+
+    <div class="footerNote">Documento gerado automaticamente pelo sistema.</div>
+  </body>
+</html>`;
+}
+
+async function generateRhSolicitacaoHePdf(row) {
+  const outPath = getRhSolicitacaoHePdfPath(row.numero_documento);
+  const html = buildRhSolicitacaoHePdfHtml(row);
+  const win = new BrowserWindow({
+    show: false,
+    width: 900,
+    height: 1100,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true
+    }
+  });
+
+  try {
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const pdfBuffer = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      marginsType: 0
+    });
+    fs.writeFileSync(outPath, pdfBuffer);
+    return outPath;
+  } finally {
+    try {
+      win.close();
+    } catch (error) {
+      // ignore
+    }
+  }
+}
+
+function listRhSolicitacoesHe({ username, filters }) {
+  const ctx = ensureRhAccess(String(username || '').trim(), { requireEdit: false });
+  const { workbook } = readRhDb();
+  const { rows } = getRhSolicitacoesHeSheet(workbook);
+
+  const safe = (val) => String(val || '').trim();
+  const safeLower = (val) => safe(val).toLowerCase();
+  const canEdit = !!ctx.canEdit;
+
+  const f = filters && typeof filters === 'object' ? filters : {};
+  const filtroColabId = safe(f.colaborador_id || f.colaboradorId);
+  const filtroSetor = safeLower(f.setor);
+  const filtroSolicitante = safeLower(f.solicitante);
+  const filtroDoc = safeLower(f.numero_documento || f.numeroDocumento);
+  const filtroIni = safe(f.data_ini || f.dataIni);
+  const filtroFim = safe(f.data_fim || f.dataFim);
+
+  const visible = rows
+    .filter((r) => !safe(r.DELETED_AT))
+    .filter((r) => canEdit || normalizeUsername(r.SOLICITANTE) === normalizeUsername(ctx.username))
+    .filter((r) => !filtroColabId || safe(r.COLABORADOR_ID) === filtroColabId)
+    .filter((r) => !filtroSetor || safeLower(r.SETOR).includes(filtroSetor))
+    .filter((r) => !filtroSolicitante || safeLower(r.SOLICITANTE).includes(filtroSolicitante))
+    .filter((r) => !filtroDoc || safeLower(r.NUMERO_DOCUMENTO).includes(filtroDoc))
+    .filter((r) => {
+      const d = safe(r.DATA_HE);
+      if (filtroIni && d < filtroIni) return false;
+      if (filtroFim && d > filtroFim) return false;
+      return true;
+    })
+    .map((r) => ({
+      id: safe(r.ID),
+      numero_documento: safe(r.NUMERO_DOCUMENTO),
+      data_solicitacao: safe(r.DATA_SOLICITACAO),
+      data_he: safe(r.DATA_HE),
+      colaborador_id: safe(r.COLABORADOR_ID),
+      nome_colaborador: safe(r.NOME_COLABORADOR),
+      setor: safe(r.SETOR),
+      finalidade: safe(r.FINALIDADE),
+      hora_inicio: safe(r.HORA_INICIO),
+      hora_fim: safe(r.HORA_FIM),
+      total_horas: Number(r.TOTAL_HORAS || 0),
+      solicitante: safe(r.SOLICITANTE),
+      data_criacao: safe(r.DATA_CRIACAO),
+      ultima_atualizacao: safe(r.ULTIMA_ATUALIZACAO)
+    }))
+    .sort((a, b) => String(b.data_solicitacao).localeCompare(String(a.data_solicitacao)) || String(b.numero_documento).localeCompare(String(a.numero_documento)));
+
+  return { ok: true, canEdit, rows: visible.slice(0, 1000) };
+}
+
+function deleteRhSolicitacaoHe({ username, id }) {
+  const ctx = ensureRhAccess(String(username || '').trim(), { requireEdit: false });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+
+  const { header, rows } = getRhSolicitacoesHeSheet(workbook);
+  const safeId = String(id || '').trim();
+  const target = rows.find((r) => String(r.ID || '').trim() === safeId) || null;
+  if (!target) {
+    throw new Error('Solicitação não encontrada.');
+  }
+  if (!canEditRhSolicitacaoRow(ctx, target)) {
+    throw new Error('Você não tem permissão para excluir esta solicitação.');
+  }
+
+  const before = { ...target };
+  target.DELETED_AT = now;
+  target.ULTIMA_ATUALIZACAO = now;
+  writeSheetAoa(workbook, 'SOLICITACOES_HE', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: 'SOLICITACOES_HE_DELETE',
+    entity: 'SOLICITACOES_HE',
+    entityId: safeId,
+    before,
+    after: target
+  });
+  writeWorkbookFile(workbook, filePath);
+
+  const numero = String(target.NUMERO_DOCUMENTO || '').trim();
+  if (numero) {
+    const pdfPath = getRhSolicitacaoHePdfPath(numero);
+    try {
+      if (fs.existsSync(pdfPath)) {
+        fs.unlinkSync(pdfPath);
+      }
+    } catch (error) {
+      // ignore (não bloqueia exclusão do registro)
+    }
+  }
+
+  return { ok: true };
+}
+
+async function regenRhSolicitacaoHePdf({ username, id }) {
+  const ctx = ensureRhAccess(String(username || '').trim(), { requireEdit: false });
+  const { workbook } = readRhDb();
+  const { rows } = getRhSolicitacoesHeSheet(workbook);
+  const safeId = String(id || '').trim();
+  const target = rows.find((r) => !String(r.DELETED_AT || '').trim() && String(r.ID || '').trim() === safeId) || null;
+  if (!target) {
+    throw new Error('Solicitação não encontrada.');
+  }
+  if (!canEditRhSolicitacaoRow(ctx, target)) {
+    throw new Error('Você não tem permissão para gerar o PDF desta solicitação.');
+  }
+
+  const row = {
+    id: String(target.ID || '').trim(),
+    numero_documento: String(target.NUMERO_DOCUMENTO || '').trim(),
+    data_solicitacao: String(target.DATA_SOLICITACAO || '').trim(),
+    data_he: String(target.DATA_HE || '').trim(),
+    colaborador_id: String(target.COLABORADOR_ID || '').trim(),
+    nome_colaborador: String(target.NOME_COLABORADOR || '').trim(),
+    setor: String(target.SETOR || '').trim(),
+    finalidade: String(target.FINALIDADE || '').trim(),
+    hora_inicio: String(target.HORA_INICIO || '').trim(),
+    hora_fim: String(target.HORA_FIM || '').trim(),
+    total_horas: Number(target.TOTAL_HORAS || 0),
+    solicitante: String(target.SOLICITANTE || '').trim(),
+    data_criacao: String(target.DATA_CRIACAO || '').trim(),
+    ultima_atualizacao: String(target.ULTIMA_ATUALIZACAO || '').trim()
+  };
+
+  const filePath = await generateRhSolicitacaoHePdf(row);
+  return { ok: true, filePath };
+}
+
+async function openRhSolicitacaoHePdf({ username, id }) {
+  const ctx = ensureRhAccess(String(username || '').trim(), { requireEdit: false });
+  const { workbook } = readRhDb();
+  const { rows } = getRhSolicitacoesHeSheet(workbook);
+  const safeId = String(id || '').trim();
+  const target = rows.find((r) => !String(r.DELETED_AT || '').trim() && String(r.ID || '').trim() === safeId) || null;
+  if (!target) {
+    throw new Error('Solicitação não encontrada.');
+  }
+  if (!canEditRhSolicitacaoRow(ctx, target)) {
+    throw new Error('Você não tem permissão para visualizar esta solicitação.');
+  }
+  const numero = String(target.NUMERO_DOCUMENTO || '').trim();
+  const pdfPath = getRhSolicitacaoHePdfPath(numero);
+  if (!fs.existsSync(pdfPath)) {
+    throw new Error('PDF não encontrado. Gere novamente.');
+  }
+  const opened = await shell.openPath(pdfPath);
+  if (opened) {
+    throw new Error(opened);
+  }
+  return { ok: true, filePath: pdfPath };
+}
+
+function importRhPontoInterno({ username, date, workbookPath }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const safeDate = String(date || '').trim();
+  if (!safeDate || !/^\d{4}-\d{2}-\d{2}$/.test(safeDate)) {
+    throw new Error('Data inválida. Use YYYY-MM-DD.');
+  }
+
+  const safePath = String(workbookPath || '').trim();
+  if (!safePath) {
+    throw new Error('Selecione a planilha base.');
+  }
+  if (!fs.existsSync(safePath)) {
+    throw new Error(`Planilha base não encontrada: ${safePath}`);
+  }
+
+  const { workbook: baseWb } = readWorkbookCached(safePath);
+  const baseSheets = Array.isArray(baseWb.SheetNames) ? baseWb.SheetNames : [];
+  if (!baseSheets.length) {
+    throw new Error('Planilha base sem abas válidas.');
+  }
+
+  const { workbook: dbWb, filePath } = readRhDb();
+  const colaboradores = listRhColaboradores({ ...ctx, allowedSectorId: '' }, dbWb);
+  const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+
+  const aoa = readSheetAoa(dbWb, 'HORAS_EXTRAS');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'COLABORADOR_ID',
+    'DATA',
+    'QUANTIDADE_HORAS',
+    'TIPO_HORA',
+    'OBSERVACAO',
+    'JUSTIFICATIVA',
+    'CRIADO_POR',
+    'DATA_REGISTRO',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+
+  const atrasosAoa = readSheetAoa(dbWb, 'ATRASOS');
+  const atrasosHeader = getHeaderFromAoa(atrasosAoa, [
+    'ID',
+    'COLABORADOR_ID',
+    'DATA',
+    'QUANTIDADE_HORAS',
+    'OBSERVACAO',
+    'CRIADO_POR',
+    'DATA_REGISTRO',
+    'UPDATED_AT',
+    'DELETED_AT'
+  ]);
+  const atrasoRows = mapAoaToObjects([atrasosHeader, ...(atrasosAoa.slice(1) || [])]);
+
+  const tipoHora = 'ponto_interno';
+  const byKey = new Map();
+  rows.forEach((r) => {
+    if (String(r.DELETED_AT || '').trim()) {
+      return;
+    }
+    const key = `${String(r.COLABORADOR_ID || '').trim()}||${String(r.DATA || '').trim()}||${String(r.TIPO_HORA || '').trim()}`;
+    if (!key.startsWith('||')) {
+      byKey.set(key, r);
+    }
+  });
+
+  const atrasosByKey = new Map();
+  atrasoRows.forEach((r) => {
+    if (String(r.DELETED_AT || '').trim()) {
+      return;
+    }
+    const key = `${String(r.COLABORADOR_ID || '').trim()}||${String(r.DATA || '').trim()}`;
+    if (!key.startsWith('||')) {
+      atrasosByKey.set(key, r);
+    }
+  });
+
+  const now = new Date().toISOString();
+  const imported = [];
+  const updated = [];
+  const skipped = [];
+  const unmatchedSheets = [];
+  const importedAtrasos = [];
+  const updatedAtrasos = [];
+  const skippedAtrasos = [];
+  const unmatchedSheetsAtrasos = [];
+
+  baseSheets.forEach((sheetName) => {
+    const ws = baseWb.Sheets[sheetName];
+    if (!ws) {
+      return;
+    }
+
+    const { match } = matchColaboradorBySheetName(colaboradores, sheetName);
+    const colaboradorId = (match && match.id && collabById.has(String(match.id))) ? String(match.id) : '';
+
+    const heCell = ws.S2 || null;
+    const horas = parseHeHoursFromCell(heCell);
+    if (!Number.isFinite(horas) || horas <= 0) {
+      skipped.push({ sheetName, horas });
+    } else if (!colaboradorId) {
+      unmatchedSheets.push({ sheetName, horas });
+    } else {
+      const key = `${colaboradorId}||${safeDate}||${tipoHora}`;
+      const existing = byKey.get(key) || null;
+      const obs = `Importado (Ponto interno) • ${path.basename(safePath)}`;
+      if (existing) {
+        existing.QUANTIDADE_HORAS = Number(horas);
+        existing.OBSERVACAO = obs;
+        existing.UPDATED_AT = now;
+        updated.push({ sheetName, colaboradorId, horas });
+      } else {
+        const row = {
+          ID: String(generateRhId()),
+          COLABORADOR_ID: colaboradorId,
+          DATA: safeDate,
+          QUANTIDADE_HORAS: Number(horas),
+          TIPO_HORA: tipoHora,
+          OBSERVACAO: obs,
+          JUSTIFICATIVA: '',
+          CRIADO_POR: ctx.username,
+          DATA_REGISTRO: now,
+          UPDATED_AT: now,
+          DELETED_AT: ''
+        };
+        rows.push(row);
+        byKey.set(key, row);
+        imported.push({ sheetName, colaboradorId, horas });
+      }
+    }
+
+    const atrasoCell = ws.R2 || null;
+    const atrasoHoras = parseRhAtrasoHoursFromCell(atrasoCell);
+    if (!Number.isFinite(atrasoHoras) || atrasoHoras <= 0) {
+      skippedAtrasos.push({ sheetName, atrasoHoras });
+      return;
+    }
+    if (!colaboradorId) {
+      unmatchedSheetsAtrasos.push({ sheetName, atrasoHoras });
+      return;
+    }
+
+    const atrasoKey = `${colaboradorId}||${safeDate}`;
+    const existingAtraso = atrasosByKey.get(atrasoKey) || null;
+    const obsAtraso = `Importado (Atrasos) • ${path.basename(safePath)}`;
+    if (existingAtraso) {
+      existingAtraso.QUANTIDADE_HORAS = Number(atrasoHoras);
+      existingAtraso.OBSERVACAO = obsAtraso;
+      existingAtraso.UPDATED_AT = now;
+      updatedAtrasos.push({ sheetName, colaboradorId, atrasoHoras });
+    } else {
+      const row = {
+        ID: String(generateRhId()),
+        COLABORADOR_ID: colaboradorId,
+        DATA: safeDate,
+        QUANTIDADE_HORAS: Number(atrasoHoras),
+        OBSERVACAO: obsAtraso,
+        CRIADO_POR: ctx.username,
+        DATA_REGISTRO: now,
+        UPDATED_AT: now,
+        DELETED_AT: ''
+      };
+      atrasoRows.push(row);
+      atrasosByKey.set(atrasoKey, row);
+      importedAtrasos.push({ sheetName, colaboradorId, atrasoHoras });
+    }
+  });
+
+  if (!imported.length && !updated.length && !importedAtrasos.length && !updatedAtrasos.length) {
+    return {
+      ok: true,
+      imported: 0,
+      updated: 0,
+      skipped: skipped.length,
+      unmatched: unmatchedSheets.length,
+      importedAtrasos: 0,
+      updatedAtrasos: 0,
+      skippedAtrasos: skippedAtrasos.length,
+      unmatchedAtrasos: unmatchedSheetsAtrasos.length,
+      details: {
+        unmatchedSheets: unmatchedSheets.slice(0, 20),
+        unmatchedSheetsAtrasos: unmatchedSheetsAtrasos.slice(0, 20)
+      }
+    };
+  }
+
+  if (imported.length || updated.length) {
+    writeSheetAoa(dbWb, 'HORAS_EXTRAS', objectsToAoa(header, rows));
+  }
+  if (importedAtrasos.length || updatedAtrasos.length) {
+    writeSheetAoa(dbWb, 'ATRASOS', objectsToAoa(atrasosHeader, atrasoRows));
+  }
+  appendRhAudit(dbWb, {
+    username: ctx.username,
+    action: 'IMPORT_PONTO_INTERNO',
+    entity: 'HORAS_EXTRAS',
+    entityId: safeDate,
+    before: null,
+    after: {
+      date: safeDate,
+      sourceFile: safePath,
+      imported: imported.length,
+      updated: updated.length,
+      skipped: skipped.length,
+      unmatched: unmatchedSheets.length,
+      importedAtrasos: importedAtrasos.length,
+      updatedAtrasos: updatedAtrasos.length,
+      skippedAtrasos: skippedAtrasos.length,
+      unmatchedAtrasos: unmatchedSheetsAtrasos.length,
+      unmatchedSheets: unmatchedSheets.slice(0, 30).map((x) => x.sheetName),
+      unmatchedSheetsAtrasos: unmatchedSheetsAtrasos.slice(0, 30).map((x) => x.sheetName)
+    }
+  });
+  writeWorkbookFile(dbWb, filePath);
+
+  return {
+    ok: true,
+    imported: imported.length,
+    updated: updated.length,
+    skipped: skipped.length,
+    unmatched: unmatchedSheets.length,
+    importedAtrasos: importedAtrasos.length,
+    updatedAtrasos: updatedAtrasos.length,
+    skippedAtrasos: skippedAtrasos.length,
+    unmatchedAtrasos: unmatchedSheetsAtrasos.length,
+    details: {
+      unmatchedSheets: unmatchedSheets.slice(0, 20),
+      unmatchedSheetsAtrasos: unmatchedSheetsAtrasos.slice(0, 20)
+    }
+  };
+}
+
+function deleteRhHoraExtra({ username, id }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const aoa = readSheetAoa(workbook, 'HORAS_EXTRAS');
+  const header = getHeaderFromAoa(aoa, ['ID', 'COLABORADOR_ID', 'DATA', 'QUANTIDADE_HORAS', 'TIPO_HORA', 'OBSERVACAO', 'JUSTIFICATIVA', 'CRIADO_POR', 'DATA_REGISTRO', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const safeId = String(id || '').trim();
+  const target = rows.find((r) => String(r.ID || '').trim() === safeId);
+  if (!target) {
+    throw new Error('Lançamento não encontrado.');
+  }
+  const before = { ...target };
+  target.DELETED_AT = now;
+  target.UPDATED_AT = now;
+  writeSheetAoa(workbook, 'HORAS_EXTRAS', objectsToAoa(header, rows));
+  appendRhAudit(workbook, { username: ctx.username, action: 'HORAS_EXTRAS_DELETE', entity: 'HORAS_EXTRAS', entityId: safeId, before, after: target });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function upsertRhUserRule({ username, target, role, setor_id }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const safeTarget = normalizeUsername(target);
+  if (!safeTarget) {
+    throw new Error('Usuário alvo obrigatório.');
+  }
+  const safeRole = normalizeRhRole(role);
+  const safeSetor = String(setor_id || '').trim();
+  if (safeRole === 'GESTOR' && !safeSetor) {
+    throw new Error('Gestor precisa de setor.');
+  }
+
+  const aoa = readSheetAoa(workbook, 'USERS_RH');
+  const header = getHeaderFromAoa(aoa, ['USERNAME', 'ROLE', 'SETOR_ID', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+
+  const existing = rows.find((r) => normalizeUsername(r.USERNAME) === safeTarget) || null;
+  const before = existing ? { ...existing } : null;
+  const targetRow = existing || { USERNAME: safeTarget };
+  targetRow.ROLE = safeRole;
+  targetRow.SETOR_ID = safeSetor;
+  targetRow.UPDATED_AT = now;
+  targetRow.DELETED_AT = '';
+  if (!existing) {
+    rows.push(targetRow);
+  }
+
+  writeSheetAoa(workbook, 'USERS_RH', objectsToAoa(header, rows));
+  appendRhAudit(workbook, { username: ctx.username, action: before ? 'USERS_RH_UPDATE' : 'USERS_RH_CREATE', entity: 'USERS_RH', entityId: safeTarget, before, after: targetRow });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function deleteRhUserRule({ username, target }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const safeTarget = normalizeUsername(target);
+  if (!safeTarget) {
+    throw new Error('Usuário alvo obrigatório.');
+  }
+  const aoa = readSheetAoa(workbook, 'USERS_RH');
+  const header = getHeaderFromAoa(aoa, ['USERNAME', 'ROLE', 'SETOR_ID', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const targetRow = rows.find((r) => normalizeUsername(r.USERNAME) === safeTarget);
+  if (!targetRow) {
+    throw new Error('Usuário RH não encontrado.');
+  }
+  const before = { ...targetRow };
+  targetRow.DELETED_AT = now;
+  targetRow.UPDATED_AT = now;
+  writeSheetAoa(workbook, 'USERS_RH', objectsToAoa(header, rows));
+  appendRhAudit(workbook, { username: ctx.username, action: 'USERS_RH_DELETE', entity: 'USERS_RH', entityId: safeTarget, before, after: targetRow });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function normalizeRequestStatus(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (text === 'APROVADO' || text === 'NEGADO') {
+    return text;
+  }
+  return 'PENDENTE';
+}
+
+function listRhAccessRequests(workbook) {
+  const objs = readSheetObjects(workbook, 'ACCESS_REQUESTS');
+  return objs.map((row) => ({
+    id: String(row.ID || '').trim(),
+    username: normalizeUsername(row.USERNAME),
+    requested_role: normalizeRhRole(row.REQUESTED_ROLE),
+    requested_setor_id: String(row.REQUESTED_SETOR_ID || '').trim(),
+    requested_at: String(row.REQUESTED_AT || '').trim(),
+    status: normalizeRequestStatus(row.STATUS),
+    decided_at: String(row.DECIDED_AT || '').trim(),
+    decided_by: normalizeUsername(row.DECIDED_BY)
+  })).filter((r) => r.id && r.username && r.requested_at);
+}
+
+function createRhAccessRequest({ username, requested_role, requested_setor_id }) {
+  const ctx = ensureRhAccess(username, { requireEdit: false, allowUnconfigured: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+
+  if (ctx.canEdit) {
+    throw new Error('Usuário RH (edição) não precisa solicitar acesso.');
+  }
+  const role = normalizeRhRole(requested_role);
+  if (role !== 'GESTOR') {
+    throw new Error('Solicitação inválida (role).');
+  }
+  const setorId = String(requested_setor_id || '').trim();
+  if (!setorId) {
+    throw new Error('Selecione um setor para solicitar.');
+  }
+
+  const setores = listRhSetores({ ...ctx, allowedSectorId: '' }, workbook);
+  if (!setores.some((s) => String(s.id) === setorId)) {
+    throw new Error('Setor solicitado não encontrado.');
+  }
+
+  const requests = listRhAccessRequests(workbook);
+  const pending = requests.find((r) => r.username === ctx.username && r.status === 'PENDENTE') || null;
+  if (pending) {
+    throw new Error('Já existe uma solicitação pendente para este usuário.');
+  }
+
+  const aoa = readSheetAoa(workbook, 'ACCESS_REQUESTS');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'USERNAME',
+    'REQUESTED_ROLE',
+    'REQUESTED_SETOR_ID',
+    'REQUESTED_AT',
+    'STATUS',
+    'DECIDED_AT',
+    'DECIDED_BY'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const row = {
+    ID: String(generateRhId()),
+    USERNAME: ctx.username,
+    REQUESTED_ROLE: role,
+    REQUESTED_SETOR_ID: setorId,
+    REQUESTED_AT: now,
+    STATUS: 'PENDENTE',
+    DECIDED_AT: '',
+    DECIDED_BY: ''
+  };
+  rows.push(row);
+  writeSheetAoa(workbook, 'ACCESS_REQUESTS', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: 'ACCESS_REQUEST_CREATE',
+    entity: 'ACCESS_REQUESTS',
+    entityId: row.ID,
+    before: null,
+    after: row
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true, requestId: row.ID };
+}
+
+function decideRhAccessRequest({ username, requestId, decision }) {
+  const ctx = ensureRhAccess(username, { requireEdit: true, allowUnconfigured: true });
+  const { workbook, filePath } = readRhDb();
+  const now = new Date().toISOString();
+  const safeDecision = String(decision || '').trim().toUpperCase();
+  if (safeDecision !== 'APROVADO' && safeDecision !== 'NEGADO') {
+    throw new Error('Decisão inválida.');
+  }
+  const safeId = String(requestId || '').trim();
+  if (!safeId) {
+    throw new Error('ID da solicitação obrigatório.');
+  }
+
+  const aoa = readSheetAoa(workbook, 'ACCESS_REQUESTS');
+  const header = getHeaderFromAoa(aoa, [
+    'ID',
+    'USERNAME',
+    'REQUESTED_ROLE',
+    'REQUESTED_SETOR_ID',
+    'REQUESTED_AT',
+    'STATUS',
+    'DECIDED_AT',
+    'DECIDED_BY'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  const target = rows.find((r) => String(r.ID || '').trim() === safeId);
+  if (!target) {
+    throw new Error('Solicitação não encontrada.');
+  }
+  const before = { ...target };
+  const status = normalizeRequestStatus(target.STATUS);
+  if (status !== 'PENDENTE') {
+    throw new Error('Solicitação já decidida.');
+  }
+
+  target.STATUS = safeDecision;
+  target.DECIDED_AT = now;
+  target.DECIDED_BY = ctx.username;
+
+  writeSheetAoa(workbook, 'ACCESS_REQUESTS', objectsToAoa(header, rows));
+  appendRhAudit(workbook, {
+    username: ctx.username,
+    action: 'ACCESS_REQUEST_DECIDE',
+    entity: 'ACCESS_REQUESTS',
+    entityId: safeId,
+    before,
+    after: target
+  });
+
+  if (safeDecision === 'APROVADO') {
+    upsertRhUserRule({
+      username: ctx.username,
+      target: String(target.USERNAME || '').trim(),
+      role: String(target.REQUESTED_ROLE || 'GESTOR').trim(),
+      setor_id: String(target.REQUESTED_SETOR_ID || '').trim()
+    });
+  }
+
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
 
 function getFiscalRoot() {
   const settings = loadSettings();
-  const fiscalRoot = String(settings.fiscalRoot || '').trim();
+  let fiscalRoot = String(settings.fiscalRoot || '').trim();
   if (!fiscalRoot) {
     throw new Error('Configure o Caminho Fiscal (R:) nas Configuracoes.');
+  }
+  // Em Windows, "R:" (sem barra) é relativo ao diretório atual do drive.
+  // Normaliza para "R:\\".
+  if (/^[a-zA-Z]:$/.test(fiscalRoot)) {
+    fiscalRoot = `${fiscalRoot}\\`;
   }
   return fiscalRoot;
 }
@@ -524,6 +3791,136 @@ function getFiscalRoot() {
 function resolveFiscalPath(relativeParts) {
   const fiscalRoot = getFiscalRoot();
   return path.join(fiscalRoot, ...relativeParts);
+}
+
+function parsePtBrDateToYmd(text) {
+  const value = String(text || '').trim();
+  if (!value) {
+    return '';
+  }
+  const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!match) {
+    return '';
+  }
+  const dd = String(match[1]).padStart(2, '0');
+  const mm = String(match[2]).padStart(2, '0');
+  let yyyy = Number(match[3]);
+  if (match[3].length === 2) {
+    yyyy = yyyy <= 50 ? 2000 + yyyy : 1900 + yyyy;
+  }
+  if (!Number.isFinite(yyyy) || yyyy < 1900 || yyyy > 2100) {
+    return '';
+  }
+  return `${String(yyyy).padStart(4, '0')}-${mm}-${dd}`;
+}
+
+function parseRncSecondsValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    // Se veio como Date, usa apenas a parte de tempo.
+    return (value.getHours() * 3600) + (value.getMinutes() * 60) + value.getSeconds();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Excel pode armazenar duração como fração do dia.
+    if (value > 0 && value < 1) {
+      return Math.round(value * 86400);
+    }
+    // Caso já esteja em segundos.
+    if (value >= 1) {
+      return Math.round(value);
+    }
+    return 0;
+  }
+
+  const text = String(value || '').trim();
+  if (!text) {
+    return 0;
+  }
+
+  // HH:MM:SS ou MM:SS
+  const parts = text.split(':').map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 3) {
+    const h = parseNumericValue(parts[0]);
+    const m = parseNumericValue(parts[1]);
+    const s = parseNumericValue(parts[2]);
+    return Math.max(0, Math.round((h * 3600) + (m * 60) + s));
+  }
+  if (parts.length === 2) {
+    const m = parseNumericValue(parts[0]);
+    const s = parseNumericValue(parts[1]);
+    return Math.max(0, Math.round((m * 60) + s));
+  }
+
+  return Math.max(0, Math.round(parseNumericValue(text)));
+}
+
+function resolveRncWorkbookPath() {
+  const fiscalRoot = getFiscalRoot();
+  const fileName = 'Relatório de Não Conformidade BANCO DE DADOS.xlsm';
+  const normalizedRoot = normalizeText(path.basename(fiscalRoot));
+
+  const candidates = [
+    resolveFiscalPath(FISCAL_RNC_RELATIVE),
+    path.join(fiscalRoot, 'PartsSeals', 'Rnc Interna', fileName),
+    path.join(fiscalRoot, 'Rnc Interna', fileName)
+  ];
+
+  // Quando o usuário configura direto em R:\PartsSeals, evita duplicar "PartsSeals".
+  if (normalizedRoot === 'PARTSSEALS') {
+    candidates.push(path.join(fiscalRoot, 'Rnc Interna', fileName));
+  }
+
+  // Quando o usuário configura direto em R:\Rede, tenta incluir PartsSeals.
+  if (normalizedRoot === 'REDE') {
+    candidates.push(path.join(fiscalRoot, 'PartsSeals', 'Rnc Interna', fileName));
+  }
+
+  for (const p of candidates) {
+    if (p && fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  // Fallback: procura por diretório e arquivo pelo nome normalizado.
+  const searchBases = [fiscalRoot, path.dirname(fiscalRoot)];
+  for (const base of searchBases) {
+    if (!base || !fs.existsSync(base)) {
+      continue;
+    }
+
+    const partsSealsDir = findChildDirByNormalizedName(base, 'PartsSeals') || base;
+    const rncDir = findChildDirByNormalizedName(partsSealsDir, 'Rnc Interna') || findChildDirByNormalizedName(base, 'Rnc Interna');
+    if (!rncDir || !fs.existsSync(rncDir)) {
+      continue;
+    }
+
+    const files = fs.readdirSync(rncDir, { withFileTypes: true }).filter((d) => d.isFile());
+    const target = normalizeText('Relatório de Não Conformidade BANCO DE DADOS');
+    const exact = files.find((f) => {
+      if (path.extname(f.name).toLowerCase() !== '.xlsm') {
+        return false;
+      }
+      return normalizeText(path.parse(f.name).name) === target;
+    });
+    if (exact) {
+      return path.join(rncDir, exact.name);
+    }
+
+    const fuzzy = files.find((f) => {
+      if (path.extname(f.name).toLowerCase() !== '.xlsm') {
+        return false;
+      }
+      const baseName = normalizeText(path.parse(f.name).name);
+      return baseName.includes('NAO CONFORMIDADE')
+        && baseName.includes('BANCO')
+        && baseName.includes('DADOS');
+    });
+    if (fuzzy) {
+      return path.join(rncDir, fuzzy.name);
+    }
+  }
+
+  return null;
 }
 
 function resolvePcpDashboardDailyRootPath() {
@@ -542,13 +3939,19 @@ function resolvePcpDashboardDailyRootPath() {
   const candidatePaths = [
     path.join('R:\\', ...PCP_DASHBOARD_DAILY_RELATIVE),
     path.join(fiscalRoot, ...PCP_DASHBOARD_DAILY_RELATIVE),
+    path.join(fiscalRoot, 'PartsSeals', 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'),
+    path.join(fiscalRoot, 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'),
+    path.join('R:\\', ...PCP_DASHBOARD_DAILY_RELATIVE_LEGACY),
+    path.join(fiscalRoot, ...PCP_DASHBOARD_DAILY_RELATIVE_LEGACY),
     path.join(fiscalRoot, 'PartsSeals', 'Programação de Produção Diaria'),
     path.join(fiscalRoot, 'Programação de Produção Diaria')
   ];
   if (normalizedRoot === 'REDE') {
+    candidatePaths.push(path.join(fiscalRoot, 'PartsSeals', 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'));
     candidatePaths.push(path.join(fiscalRoot, 'PartsSeals', 'Programação de Produção Diaria'));
   }
   if (normalizedRoot === 'PARTSSEALS') {
+    candidatePaths.push(path.join(fiscalRoot, 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'));
     candidatePaths.push(path.join(fiscalRoot, 'Programação de Produção Diaria'));
   }
 
@@ -560,6 +3963,9 @@ function resolvePcpDashboardDailyRootPath() {
 
   const relativeOptions = [
     PCP_DASHBOARD_DAILY_RELATIVE,
+    PCP_DASHBOARD_DAILY_RELATIVE_LEGACY,
+    ['PartsSeals', 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'],
+    ['PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'],
     ['PartsSeals', 'Programação de Produção Diaria'],
     ['Programação de Produção Diaria']
   ];
@@ -654,6 +4060,137 @@ function saveSettings(nextSettings) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8');
   return merged;
+}
+
+function normalizeTrackingCode(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function looksLikeCorreiosTrackingCode(code) {
+  if (/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(code)) {
+    return true;
+  }
+  return /^[A-Z0-9]{8,32}$/.test(code);
+}
+
+function findFiscalInfoByTrackingCode(code) {
+  const normalizedCode = normalizeTrackingCode(code);
+  if (!normalizedCode) {
+    return null;
+  }
+
+  try {
+    const { rows } = readBancoPedidosRowsLite();
+    const matches = rows.filter((row) => normalizeTrackingCode(row.rastreio) === normalizedCode);
+    if (!matches.length) {
+      return null;
+    }
+
+    const nfSet = new Set(matches.map((m) => String(m.nf || '').trim()).filter(Boolean));
+    const clienteSet = new Set(matches.map((m) => String(m.cliente || '').trim()).filter(Boolean));
+    const pedidoSet = new Set(matches.map((m) => String(m.pedido || '').trim()).filter(Boolean));
+
+    const nfs = Array.from(nfSet);
+    const clientes = Array.from(clienteSet);
+    const pedidos = Array.from(pedidoSet);
+    nfs.sort((a, b) => String(b).localeCompare(String(a), 'pt-BR', { numeric: true }));
+    clientes.sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
+    pedidos.sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true }));
+
+    return {
+      nf: nfs[0] || '',
+      cliente: clientes[0] || '',
+      pedidos: pedidos.slice(0, 8),
+      nfs,
+      clientes
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+async function httpsJson(url, options = {}) {
+  if (typeof fetch === 'function') {
+    try {
+      const response = await fetch(url, options);
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (error) {
+        data = null;
+      }
+      return { ok: response.ok, status: response.status, data, text };
+    } catch (error) {
+      // fallback for environments where undici/fetch fails (proxy/DNS/TLS)
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const requestOptions = {
+      method: options.method || 'GET',
+      hostname: parsed.hostname,
+      path: `${parsed.pathname}${parsed.search}`,
+      headers: options.headers || {}
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (error) {
+          data = null;
+        }
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, data, text });
+      });
+    });
+
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function trackSeurastreio(code, apiKey) {
+  const url = `https://seurastreio.com.br/api/public/rastreio/${encodeURIComponent(code)}`;
+  const headers = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${apiKey}`
+  };
+
+  const result = await httpsJson(url, { method: 'GET', headers });
+  if (result.status === 404) {
+    return { valid: false, code, provider: 'seurastreio' };
+  }
+  if (!result.ok) {
+    const detail = result.data && (result.data.message || result.data.error || result.data.detail);
+    throw new Error(`Erro ao consultar rastreio (status ${result.status}). ${detail || ''}`.trim());
+  }
+
+  const rastreio = result.data && (result.data.rastreio || result.data);
+  const last = rastreio && (rastreio.eventoMaisRecente || rastreio.ultimoEvento || rastreio.lastEvent);
+  const status = (last && (last.descricao || last.status || last.evento)) || (rastreio && rastreio.status) || '';
+  const local = (last && (last.local || last.unidade || last.cidade)) || '';
+  const destino = (last && (last.destino || last.destinatario || last.para || last.enderecoDestino)) || (rastreio && rastreio.destino) || '';
+  const updatedAt = (last && (last.data || last.dataHora || last.data_hora)) || '';
+
+  return {
+    valid: true,
+    code,
+    provider: 'seurastreio',
+    status: String(status || '').trim() || 'Sem status',
+    local: String(local || '').trim(),
+    destino: String(destino || '').trim(),
+    updatedAt: String(updatedAt || '').trim()
+  };
 }
 
 function toPtBrMonthName(date) {
@@ -2052,31 +5589,57 @@ function loadPcpEfficiencySnapshot({ date, listType }) {
 }
 
 function parseDateToDdMm(dateValue) {
+  return parseDashboardDate(dateValue).ddMm;
+}
+
+function parseDashboardDate(dateValue) {
   const dt = new Date(`${dateValue}T00:00:00`);
   if (Number.isNaN(dt.getTime())) {
     throw new Error('Data invalida para Dashboard PCP.');
   }
   const dd = String(dt.getDate()).padStart(2, '0');
   const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  return `${dd}-${mm}`;
+  return { dt, ddMm: `${dd}-${mm}` };
 }
 
 function findDailyDashboardWorkbookPath(dateValue) {
-  const ddMm = parseDateToDdMm(dateValue);
+  const { dt, ddMm } = parseDashboardDate(dateValue);
   const basePath = resolvePcpDashboardDailyRootPath();
-  const files = fs.readdirSync(basePath, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .filter((name) => /\.xlsm$/i.test(name));
+
+  const yearName = String(dt.getFullYear());
+  const yearFolder = fs.existsSync(path.join(basePath, yearName))
+    ? path.join(basePath, yearName)
+    : findChildDirByNormalizedName(basePath, yearName);
+
+  const monthFolder = yearFolder ? resolveMonthFolder(yearFolder, toPtBrMonthName(dt)) : null;
+
+  const searchPaths = [];
+  if (monthFolder && fs.existsSync(monthFolder)) {
+    searchPaths.push(monthFolder);
+  }
+  searchPaths.push(basePath);
 
   const target = normalizeText(ddMm);
-  const candidates = files.filter((name) => normalizeText(name).includes(target));
-  if (!candidates.length) {
-    throw new Error(`Nao encontrei planilha de usinagem para ${ddMm} em ${basePath}.`);
+  for (const searchPath of searchPaths) {
+    if (!searchPath || !fs.existsSync(searchPath)) {
+      continue;
+    }
+
+    const files = fs.readdirSync(searchPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => /\.xlsm$/i.test(name));
+
+    const candidates = files.filter((name) => normalizeText(name).includes(target));
+    if (!candidates.length) {
+      continue;
+    }
+
+    const sorted = candidates.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return path.join(searchPath, sorted[0]);
   }
 
-  const sorted = candidates.sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  return path.join(basePath, sorted[0]);
+  throw new Error(`Nao encontrei planilha de usinagem para ${ddMm} em ${searchPaths.join(' | ')}.`);
 }
 
 function detectDashboardHeaderMap(headerRow) {
@@ -2515,6 +6078,316 @@ function parseDashboardMaterials(workbook) {
   return materials;
 }
 
+function loadRncSnapshotForDate(dateValue) {
+  const safeDate = String(dateValue || '').trim();
+  if (!safeDate) {
+    return {
+      kpis: { rncQtd: 0, rncCost: 0, totalCost: 0 },
+      usinagem: { machines: [] },
+      report: { kpis: {}, charts: {} },
+      debug: { sourceFile: null, sheetName: null }
+    };
+  }
+
+  let workbookPath = null;
+  let fiscalRoot = '';
+  let expected = '';
+  let fiscalRootExists = false;
+  let expectedExists = false;
+  try {
+    fiscalRoot = getFiscalRoot();
+    expected = resolveFiscalPath(FISCAL_RNC_RELATIVE);
+    fiscalRootExists = !!(fiscalRoot && fs.existsSync(fiscalRoot));
+    expectedExists = !!(expected && fs.existsSync(expected));
+    workbookPath = resolveRncWorkbookPath();
+  } catch (error) {
+    return {
+      kpis: { rncQtd: 0, rncCost: 0, totalCost: 0 },
+      usinagem: { machines: [] },
+      debug: {
+        error: (error && error.message) || String(error || ''),
+        sourceFile: null,
+        sheetName: null,
+        fiscalRoot,
+        fiscalRootExists
+      }
+    };
+  }
+  if (!workbookPath || !fs.existsSync(workbookPath)) {
+    return {
+      kpis: { rncQtd: 0, rncCost: 0, totalCost: 0 },
+      usinagem: { machines: [] },
+      report: { kpis: {}, charts: {} },
+      debug: { sourceFile: workbookPath || null, sheetName: null, fiscalRoot, expected, fiscalRootExists, expectedExists }
+    };
+  }
+
+  let workbook = null;
+  try {
+    workbook = readDashboardWorkbookSafe(workbookPath);
+  } catch (error) {
+    const msg = (error && error.message) || '';
+    const code = (error && error.code) || 'UNKNOWN';
+    throw new Error(`Nao consegui ler a planilha de RNC (arquivo em uso/bloqueado). Codigo: ${code}. ${msg}`.trim());
+  }
+  const sheetName = workbook.SheetNames.find((name) => {
+    const normalized = normalizeText(name).replace(/\s+/g, '');
+    return normalized === 'RNC' || normalized.startsWith('RNC');
+  });
+  if (!sheetName || !workbook.Sheets[sheetName]) {
+    return {
+      kpis: { rncQtd: 0, rncCost: 0, totalCost: 0 },
+      usinagem: { machines: [] },
+      report: { kpis: {}, charts: {} },
+      debug: { sourceFile: workbookPath, sheetName: sheetName || null }
+    };
+  }
+
+  const ws = workbook.Sheets[sheetName];
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
+
+  // Layout fixo informado (Tabela1 iniciando na coluna B, cabeçalho na linha 5):
+  // B=Nº RNC, ... M=Custo apurado, P=Data, Q=Segs Perdidos, R=Setor, T=Maquina
+  const COL = {
+    nrnc: 1, // B
+    qtd: 6, // G
+    descricao: 7, // H
+    custo: 12, // M
+    data: 15, // P
+    segs: 16, // Q
+    setor: 17, // R
+    maquina: 19 // T
+    ,
+    material: 20 // U
+  };
+  const headerIndex = 4; // linha 5 (0-based)
+  const startRow = headerIndex + 1; // linha 6 (0-based)
+  let rncQtd = 0;
+  let rncCost = 0;
+
+  const machineStats = new Map();
+  const selectedYmd = safeDate;
+  let usinagemPiecesRefugadas = 0;
+  let usinagemSegsPerdidos = 0;
+  let usinagemCostApurado = 0;
+  let totalSegsPerdidos = 0;
+
+  const sectorStats = new Map();
+  const reasonStats = new Map();
+  const materialStats = new Map();
+  const machineTimeStatsAll = new Map();
+  const machineTimeStatsUsinagem = new Map();
+
+  const toYmdFromCell = (cell) => {
+    if (cell instanceof Date && !Number.isNaN(cell.getTime())) {
+      const yyyy = cell.getFullYear();
+      const mm = String(cell.getMonth() + 1).padStart(2, '0');
+      const dd = String(cell.getDate()).padStart(2, '0');
+      return `${String(yyyy).padStart(4, '0')}-${mm}-${dd}`;
+    }
+    const raw = String(cell || '').trim();
+    return parsePtBrDateToYmd(raw) || parsePtBrDateToYmd(formatExcelDatePtBr(cell));
+  };
+
+  const normalizeSector = (value) => {
+    const raw = String(value || '').trim();
+    const n = normalizeText(raw);
+    if (!n) {
+      return { key: 'SEM SETOR', label: 'SEM SETOR' };
+    }
+    if (n.includes('USINAGEM')) return { key: 'USINAGEM', label: 'USINAGEM' };
+    if (n.includes('ACABAMENTO')) return { key: 'ACABAMENTO', label: 'ACABAMENTO' };
+    if (n.includes('MOLDAGEM')) return { key: 'MOLDAGEM', label: 'MOLDAGEM' };
+    if (n.includes('PROJETO')) return { key: 'PROJETO', label: 'PROJETO' };
+    if (n.includes('PCP')) return { key: 'PCP', label: 'PCP' };
+    if (n.includes('FORNECEDOR')) return { key: 'FORNECEDOR', label: 'FORNECEDOR' };
+    return { key: n, label: raw.toUpperCase() };
+  };
+
+  for (let r = startRow; r <= range.e.r; r += 1) {
+    const nrncCell = getCell(ws, r, COL.nrnc);
+    const dateCell = getCell(ws, r, COL.data);
+    const nrncValue = (nrncCell && nrncCell.v) != null ? String(nrncCell.v).trim() : '';
+    const rawDate = dateCell ? dateCell.v : '';
+
+    if (!nrncValue && !rawDate) {
+      continue;
+    }
+
+    const rowYmd = toYmdFromCell(rawDate);
+    if (!rowYmd || rowYmd !== selectedYmd) {
+      continue;
+    }
+
+    rncQtd += 1;
+    const costCell = getCell(ws, r, COL.custo);
+    const cost = costCell ? parseNumericValue(costCell.v) : 0;
+    rncCost += cost;
+
+    const setorCell = getCell(ws, r, COL.setor);
+    const sectorInfo = normalizeSector(setorCell ? setorCell.v : '');
+    if (!sectorStats.has(sectorInfo.key)) {
+      sectorStats.set(sectorInfo.key, { sector: sectorInfo.label, count: 0, cost: 0, segs: 0 });
+    }
+    const sectorEntry = sectorStats.get(sectorInfo.key);
+    sectorEntry.count += 1;
+    sectorEntry.cost += cost;
+
+    const qtdCell = getCell(ws, r, COL.qtd);
+    const qtd = qtdCell ? parseNumericValue(qtdCell.v) : 0;
+
+    const machineCell = getCell(ws, r, COL.maquina);
+    const machineRaw = machineCell ? String(machineCell.v || '').trim() : '';
+    const machine = machineRaw || 'SEM MÁQUINA';
+    const segsCell = getCell(ws, r, COL.segs);
+    let segs = segsCell ? parseRncSecondsValue(segsCell.v) : 0;
+    if (!segs) {
+      if (qtd > 0) {
+        segs = Math.round(qtd * 55);
+      }
+    }
+
+    totalSegsPerdidos += segs;
+    sectorEntry.segs += segs;
+
+    if (!machineTimeStatsAll.has(machine)) {
+      machineTimeStatsAll.set(machine, { machine, segs: 0 });
+    }
+    machineTimeStatsAll.get(machine).segs += segs;
+
+    const descCell = getCell(ws, r, COL.descricao);
+    const descRaw = descCell ? String(descCell.v || '').trim() : '';
+    const descKey = normalizeText(descRaw);
+    if (descKey) {
+      const existing = reasonStats.get(descKey) || { name: descRaw, count: 0, cost: 0 };
+      existing.count += 1;
+      existing.cost += cost;
+      reasonStats.set(descKey, existing);
+    }
+
+    const materialCell = getCell(ws, r, COL.material);
+    const materialRaw = materialCell ? String(materialCell.v || '').trim() : '';
+    const materialKey = normalizeText(materialRaw);
+    if (materialKey) {
+      const existing = materialStats.get(materialKey) || { name: materialRaw, count: 0 };
+      existing.count += 1;
+      materialStats.set(materialKey, existing);
+    }
+
+    if (sectorInfo.key !== 'USINAGEM') {
+      continue;
+    }
+
+    if (!machineTimeStatsUsinagem.has(machine)) {
+      machineTimeStatsUsinagem.set(machine, { machine, segs: 0 });
+    }
+    machineTimeStatsUsinagem.get(machine).segs += segs;
+
+    if (!machineStats.has(machine)) {
+      machineStats.set(machine, { machine, rnc: 0, segs: 0, cost: 0, pieces: 0 });
+    }
+    const entry = machineStats.get(machine);
+    entry.rnc += 1;
+    entry.segs += segs;
+    entry.cost += cost;
+    entry.pieces += qtd;
+
+    usinagemPiecesRefugadas += qtd;
+    usinagemSegsPerdidos += segs;
+    usinagemCostApurado += cost;
+  }
+
+  const machines = Array.from(machineStats.values())
+    .filter((m) => m.rnc > 0 || m.segs > 0 || m.cost > 0)
+    .sort((a, b) => {
+      if (b.rnc !== a.rnc) return b.rnc - a.rnc;
+      if (b.segs !== a.segs) return b.segs - a.segs;
+      return b.cost - a.cost;
+    });
+
+  const sectors = Array.from(sectorStats.values())
+    .filter((s) => s.count > 0)
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return b.cost - a.cost;
+    });
+
+  const reasonsByCount = Array.from(reasonStats.values())
+    .filter((r) => r.count > 0)
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return b.cost - a.cost;
+    })
+    .slice(0, 24);
+
+  const reasonsByCost = Array.from(reasonStats.values())
+    .filter((r) => r.cost > 0)
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 24);
+
+  const materialsByCount = Array.from(materialStats.values())
+    .filter((m) => m.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 24);
+
+  const machineTimeUsinagem = Array.from(machineTimeStatsUsinagem.values())
+    .filter((m) => m.segs > 0)
+    .sort((a, b) => b.segs - a.segs)
+    .slice(0, 24);
+
+  const totalSectorsCount = sectors.reduce((acc, s) => acc + Number(s.count || 0), 0);
+  const sectorPie = sectors.map((s) => ({
+    sector: s.sector,
+    count: s.count,
+    pct: totalSectorsCount > 0 ? (Number(s.count || 0) / totalSectorsCount) * 100 : 0
+  }));
+
+  const topSectorByCount = sectors.length ? sectors[0] : null;
+  const topSectorByCost = sectors.slice().sort((a, b) => b.cost - a.cost)[0] || null;
+  const topReason = reasonsByCount.length ? reasonsByCount[0] : null;
+
+  return {
+    kpis: {
+      rncQtd,
+      rncCost,
+      totalCost: rncCost
+    },
+    usinagem: {
+      machines,
+      totals: {
+        piecesRefugadas: usinagemPiecesRefugadas,
+        segsPerdidos: usinagemSegsPerdidos,
+        costApurado: usinagemCostApurado
+      }
+    },
+    report: {
+      kpis: {
+        rncQtd,
+        rncCost,
+        avgCost: rncQtd > 0 ? rncCost / rncQtd : 0,
+        segsPerdidos: totalSegsPerdidos,
+        topSectorByCount: topSectorByCount ? topSectorByCount.sector : '-',
+        topSectorByCost: topSectorByCost ? topSectorByCost.sector : '-',
+        topReason: topReason ? topReason.name : '-'
+      },
+      charts: {
+        sectorPie,
+        sectorCounts: sectors.map((s) => ({ name: s.sector, value: s.count })),
+        reasonsCount: reasonsByCount.map((r) => ({ name: r.name, value: r.count })),
+        reasonsCost: reasonsByCost.map((r) => ({ name: r.name, value: r.cost })),
+        machineTime: machineTimeUsinagem.map((m) => ({ name: m.machine, value: m.segs })),
+        materialsCount: materialsByCount.map((m) => ({ name: m.name, value: m.count }))
+      }
+    },
+    debug: {
+      sourceFile: workbookPath,
+      sheetName,
+      headerIndex,
+      col: COL
+    }
+  };
+}
+
 function findAoaCellByText(aoa, targetText) {
   const target = normalizeText(targetText);
   for (let r = 0; r < aoa.length; r += 1) {
@@ -2529,7 +6402,10 @@ function findAoaCellByText(aoa, targetText) {
 }
 
 function parseMoldagemPressesAndOperators(workbook) {
-  const sheetName = workbook.SheetNames.find((name) => normalizeText(name) === 'MOLDAGEM');
+  const sheetName = workbook.SheetNames.find((name) => {
+    const n = normalizeText(name).replace(/\s+/g, '');
+    return n === 'TABELA9' || n === 'MOLDAGEM';
+  });
   if (!sheetName) {
     return { presses: [], operators: [] };
   }
@@ -2540,29 +6416,174 @@ function parseMoldagemPressesAndOperators(workbook) {
 
   const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
 
-  const presses = [];
-  const pressHeader = findAoaCellByText(aoa, 'PRENSA');
-  if (pressHeader) {
-    for (let i = pressHeader.row + 1; i < Math.min(aoa.length, pressHeader.row + 20); i += 1) {
-      const row = aoa[i] || [];
-      const pressRaw = row[pressHeader.col];
-      const pressNum = parseNumericValue(pressRaw);
-      const nextOps = parseNumericValue(row[pressHeader.col + 1]);
-      const nextBuchas = parseNumericValue(row[pressHeader.col + 2]);
-      const hasAnyData = String(pressRaw || '').trim() || nextOps || nextBuchas;
-      if (!hasAnyData && presses.length) {
-        break;
+  const consolidatePresses1to3 = (inputPresses) => {
+    const stats = new Map([
+      [1, { press: 1, name: 'Prensa 1', ops: 0, buchas: 0 }],
+      [2, { press: 2, name: 'Prensa 2', ops: 0, buchas: 0 }],
+      [3, { press: 3, name: 'Prensa 3', ops: 0, buchas: 0 }]
+    ]);
+
+    (inputPresses || []).forEach((item) => {
+      const pressNum = parseNumericValue(item && (item.press != null ? item.press : item.name));
+      if (![1, 2, 3].includes(pressNum)) {
+        return;
       }
-      if (!pressNum || pressNum < 1) {
+      const entry = stats.get(pressNum);
+      entry.ops += parseNumericValue(item && item.ops);
+      entry.buchas += parseNumericValue(item && item.buchas);
+    });
+
+    return Array.from(stats.values());
+  };
+
+  const detectMoldagemPressTable = () => {
+    // Preferência: Tabela9 fixa (cabeçalho na linha 15 / index 14).
+    const sheetNorm = normalizeText(sheetName).replace(/\s+/g, '');
+    if (sheetNorm === 'TABELA9' && aoa.length > 15) {
+      const headerIndex = 14;
+      const headerRow = aoa[headerIndex] || [];
+      const normalized = headerRow.map((cell) => normalizeText(cell));
+      const compact = normalized.map((txt) => txt.replace(/\s+/g, ''));
+
+      let statusCol = normalized.findIndex((v) => v === 'STATUS');
+      if (statusCol < 0) {
+        statusCol = 13; // coluna N (fallback informado)
+      }
+
+      let pressColResolved = compact.findIndex((v) => v === 'NPRENSA' || v === 'NOPRENSA');
+      if (pressColResolved < 0) {
+        pressColResolved = normalized.findIndex((v) => v === 'PRENSA' || v.startsWith('PRENSA'));
+      }
+      if (pressColResolved < 0) {
+        pressColResolved = normalized.findIndex((v) => v.startsWith('N') && v.includes('PRENSA'));
+      }
+      if (pressColResolved < 0) {
+        pressColResolved = 14; // coluna O (fallback informado)
+      }
+
+      let totalBuchasColResolved = compact.findIndex((v) => v === 'TOTALBUCHAS');
+      if (totalBuchasColResolved < 0) {
+        totalBuchasColResolved = normalized.findIndex((v) => v.includes('TOTAL') && v.includes('BUCHAS'));
+      }
+      if (totalBuchasColResolved < 0) {
+        totalBuchasColResolved = compact.findIndex((v) => v === 'BUCHAPRENSADAS');
+      }
+      if (totalBuchasColResolved < 0) {
+        totalBuchasColResolved = normalized.findIndex((v) => v.includes('BUCHA') && v.includes('PRENSAD'));
+      }
+
+      if (statusCol >= 0 && pressColResolved >= 0 && totalBuchasColResolved >= 0) {
+        return { headerRow: headerIndex, statusCol, pressCol: pressColResolved, totalBuchasCol: totalBuchasColResolved };
+      }
+    }
+
+    const scanLimit = Math.min(aoa.length, 200);
+    for (let r = 0; r < scanLimit; r += 1) {
+      const row = aoa[r] || [];
+      if (!row.length) {
         continue;
       }
 
-      presses.push({
-        name: `Prensa ${String(pressNum).replace(/\.0+$/, '')}`,
-        press: pressNum,
-        ops: nextOps,
-        buchas: nextBuchas
-      });
+      const normalized = row.map((cell) => normalizeText(cell));
+      const compact = normalized.map((txt) => txt.replace(/\s+/g, ''));
+
+      const statusCol = normalized.findIndex((v) => v === 'STATUS');
+      if (statusCol < 0) {
+        continue;
+      }
+
+      let pressColResolved = compact.findIndex((v) => v === 'NPRENSA' || v === 'NOPRENSA');
+      if (pressColResolved < 0) {
+        pressColResolved = normalized.findIndex((v) => v === 'PRENSA' || v.startsWith('PRENSA'));
+      }
+      if (pressColResolved < 0) {
+        pressColResolved = normalized.findIndex((v) => v.startsWith('N') && v.includes('PRENSA'));
+      }
+
+      let totalBuchasColResolved = compact.findIndex((v) => v === 'TOTALBUCHAS');
+      if (totalBuchasColResolved < 0) {
+        totalBuchasColResolved = normalized.findIndex((v) => v.includes('TOTAL') && v.includes('BUCHAS'));
+      }
+      if (totalBuchasColResolved < 0) {
+        totalBuchasColResolved = compact.findIndex((v) => v === 'BUCHAPRENSADAS');
+      }
+      if (totalBuchasColResolved < 0) {
+        totalBuchasColResolved = normalized.findIndex((v) => v.includes('BUCHA') && v.includes('PRENSAD'));
+      }
+
+      if (pressColResolved < 0 || totalBuchasColResolved < 0) {
+        continue;
+      }
+
+      return { headerRow: r, statusCol, pressCol: pressColResolved, totalBuchasCol: totalBuchasColResolved };
+    }
+    return null;
+  };
+
+  const presses = [];
+  const pressTable = detectMoldagemPressTable();
+  if (pressTable) {
+    const stats = new Map([
+      [1, { press: 1, name: 'Prensa 1', ops: 0, buchas: 0 }],
+      [2, { press: 2, name: 'Prensa 2', ops: 0, buchas: 0 }],
+      [3, { press: 3, name: 'Prensa 3', ops: 0, buchas: 0 }]
+    ]);
+
+    let seenAny = false;
+    for (let i = pressTable.headerRow + 1; i < aoa.length; i += 1) {
+      const row = aoa[i] || [];
+      const statusValue = String(row[pressTable.statusCol] || '').trim();
+      const pressValue = row[pressTable.pressCol];
+      const buchasValue = row[pressTable.totalBuchasCol];
+      const hasAnyData = statusValue || String(pressValue || '').trim() || String(buchasValue || '').trim();
+      if (!hasAnyData) {
+        if (seenAny) {
+          break;
+        }
+        continue;
+      }
+      seenAny = true;
+
+      const statusNorm = normalizeText(statusValue);
+      if (!statusNorm.includes(MOLDAGEM_STATUS_PRENSADO)) {
+        continue;
+      }
+
+      const pressNum = parseNumericValue(pressValue);
+      if (![1, 2, 3].includes(pressNum)) {
+        continue;
+      }
+
+      const item = stats.get(pressNum);
+      item.ops += 1;
+      item.buchas += parseNumericValue(buchasValue);
+    }
+
+    presses.push(...Array.from(stats.values()));
+  } else {
+    const pressHeader = findAoaCellByText(aoa, 'PRENSA');
+    if (pressHeader) {
+      for (let i = pressHeader.row + 1; i < Math.min(aoa.length, pressHeader.row + 20); i += 1) {
+        const row = aoa[i] || [];
+        const pressRaw = row[pressHeader.col];
+        const pressNum = parseNumericValue(pressRaw);
+        const nextOps = parseNumericValue(row[pressHeader.col + 1]);
+        const nextBuchas = parseNumericValue(row[pressHeader.col + 2]);
+        const hasAnyData = String(pressRaw || '').trim() || nextOps || nextBuchas;
+        if (!hasAnyData && presses.length) {
+          break;
+        }
+        if (!pressNum || pressNum < 1) {
+          continue;
+        }
+
+        presses.push({
+          name: `Prensa ${String(pressNum).replace(/\.0+$/, '')}`,
+          press: pressNum,
+          ops: nextOps,
+          buchas: nextBuchas
+        });
+      }
     }
   }
 
@@ -2596,7 +6617,7 @@ function parseMoldagemPressesAndOperators(workbook) {
   }
 
   return {
-    presses: presses.sort((a, b) => a.press - b.press),
+    presses: consolidatePresses1to3(presses).sort((a, b) => a.press - b.press),
     operators
   };
 }
@@ -2663,13 +6684,13 @@ function countOpsGeneratedByDate(dateValue) {
       return 0;
     }
 
-    const workbook = XLSX.readFile(bancoOrdensPath, { cellDates: true });
+    const { workbook } = readWorkbookCached(bancoOrdensPath);
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     if (!sheet) {
       return 0;
     }
 
-    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+    const aoa = sheetToAoaFast(sheet);
     if (!aoa.length) {
       return 0;
     }
@@ -2856,6 +6877,16 @@ function loadPcpDashboardSnapshot({ date }) {
   const mainRowsData = loadDashboardPlanilhaRows(workbook);
   const metrics = parseDashboardMetrics(mainRowsData.rows);
   const cnc = parseDashboardCncMetrics(mainRowsData.rows);
+  let rnc = null;
+  try {
+    rnc = loadRncSnapshotForDate(safeDate);
+  } catch (error) {
+    rnc = {
+      kpis: { rncQtd: 0, rncCost: 0, totalCost: 0 },
+      usinagem: { machines: [] },
+      debug: { error: (error && error.message) || String(error || ''), sourceFile: null, sheetName: null }
+    };
+  }
   const plannedPiecesByRule = sumPlannedPiecesFromTable7(workbook, mainRowsData.sheetName);
   if (plannedPiecesByRule.total > 0) {
     metrics.kpis.pecasPlanejadas = plannedPiecesByRule.total;
@@ -2863,6 +6894,9 @@ function loadPcpDashboardSnapshot({ date }) {
   const materials = parseDashboardMaterials(workbook);
   const opGeradas = countOpsGeneratedByDate(safeDate);
   metrics.kpis.opGeradas = opGeradas;
+  metrics.kpis.rncQtd = rnc.kpis.rncQtd;
+  metrics.kpis.rncCost = rnc.kpis.rncCost;
+  metrics.kpis.totalCost = rnc.kpis.totalCost;
 
   return {
     date: safeDate,
@@ -2881,11 +6915,18 @@ function loadPcpDashboardSnapshot({ date }) {
         planejadas: metrics.kpis.opPlanejadas
       },
       cnc,
+      rncUsinagem: rnc.usinagem,
+      rncReport: rnc.report,
       acabamentoByOperator: metrics.acabamentoByOperator,
       materials
     },
     debug: {
-      plannedPiecesByRule
+      plannedPiecesByRule,
+      rnc,
+      runtime: {
+        mainFile: __filename,
+        appVersion: typeof app.getVersion === 'function' ? app.getVersion() : ''
+      }
     }
   };
 }
@@ -2899,7 +6940,7 @@ async function exportPcpDashboardPdf(webContents, payload) {
   const suggestedName = String((payload && payload.suggestedName) || '').trim() || 'pcp-dashboard.pdf';
   const defaultPath = path.join(app.getPath('downloads'), suggestedName);
   const saveResult = await dialog.showSaveDialog({
-    title: 'Salvar dashboard em PDF',
+    title: String((payload && payload.dialogTitle) || '').trim() || 'Salvar dashboard em PDF',
     defaultPath,
     filters: [{ name: 'Documento PDF', extensions: ['pdf'] }]
   });
@@ -3113,6 +7154,106 @@ function createWindow() {
   win.maximize();
 }
 
+let FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE = {
+  filePath: '',
+  mtimeMs: -1,
+  pedidoToReqs: null,
+  reqBaseToPedidos: null
+};
+
+let FISCAL_BANCO_PEDIDOS_ROWS_CACHE = { filePath: '', mtimeMs: -1, result: null };
+let FISCAL_BANCO_PEDIDOS_LITE_CACHE = { filePath: '', mtimeMs: -1, rows: null, looksLikeHeader: false };
+let RH_SNAPSHOT_CACHE = { filePath: '', mtimeMs: -1, snapshot: null };
+
+function getFiscalBancoOrdensIndex() {
+  const bancoOrdensPath = resolveFiscalPath(FISCAL_BANCO_ORDENS_RELATIVE);
+  if (!fs.existsSync(bancoOrdensPath)) {
+    throw new Error(`BancoDeOrdens nao encontrado: ${bancoOrdensPath}`);
+  }
+  const mtimeMs = getFileMtimeMs(bancoOrdensPath);
+  if (
+    FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.pedidoToReqs
+    && FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.reqBaseToPedidos
+    && FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.filePath === bancoOrdensPath
+    && FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.mtimeMs === mtimeMs
+  ) {
+    return {
+      pedidoToReqs: FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.pedidoToReqs,
+      reqBaseToPedidos: FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE.reqBaseToPedidos
+    };
+  }
+
+  const diskCache = readFastCache('fiscal-banco-ordens-index', bancoOrdensPath, mtimeMs);
+  if (diskCache && Array.isArray(diskCache.pedidoToReqs) && Array.isArray(diskCache.reqBaseToPedidos)) {
+    const pedidoToReqs = new Map(
+      diskCache.pedidoToReqs.map(([pedido, reqs]) => [String(pedido), new Set((reqs || []).map((x) => String(x)))])
+    );
+    const reqBaseToPedidos = new Map(
+      diskCache.reqBaseToPedidos.map(([reqBase, pedidos]) => [String(reqBase), new Set((pedidos || []).map((x) => String(x)))])
+    );
+    FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE = {
+      filePath: bancoOrdensPath,
+      mtimeMs,
+      pedidoToReqs,
+      reqBaseToPedidos
+    };
+    return { pedidoToReqs, reqBaseToPedidos };
+  }
+
+  const { workbook } = readWorkbookCached(bancoOrdensPath);
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error('Planilha BancoDeOrdens sem abas validas.');
+  }
+
+  const rows = sheetToAoaFast(worksheet);
+  const pedidoToReqs = new Map();
+  const reqBaseToPedidos = new Map();
+  rows.forEach((row) => {
+    const pedido = String(row[3] || '').trim();
+    if (!pedido) {
+      return;
+    }
+    const req = String(row[4] || '').trim();
+    const reqBase = extractReqBase(req);
+    const reqKey = String(req || reqBase || '').trim();
+    if (!reqKey) {
+      return;
+    }
+    if (!pedidoToReqs.has(pedido)) {
+      pedidoToReqs.set(pedido, new Set());
+    }
+    pedidoToReqs.get(pedido).add(reqKey);
+    if (reqBase) {
+      if (!reqBaseToPedidos.has(reqBase)) {
+        reqBaseToPedidos.set(reqBase, new Set());
+      }
+      reqBaseToPedidos.get(reqBase).add(pedido);
+    }
+  });
+
+  FISCAL_BANCO_ORDENS_REQ_INDEX_CACHE = {
+    filePath: bancoOrdensPath,
+    mtimeMs,
+    pedidoToReqs,
+    reqBaseToPedidos
+  };
+  writeFastCache('fiscal-banco-ordens-index', bancoOrdensPath, mtimeMs, {
+    pedidoToReqs: Array.from(pedidoToReqs.entries()).map(([pedido, set]) => [pedido, Array.from(set)]),
+    reqBaseToPedidos: Array.from(reqBaseToPedidos.entries()).map(([reqBase, set]) => [reqBase, Array.from(set)])
+  });
+  return { pedidoToReqs, reqBaseToPedidos };
+}
+
+function getFiscalPedidoToReqsIndex() {
+  return getFiscalBancoOrdensIndex().pedidoToReqs;
+}
+
+function getFiscalReqBaseToPedidosIndex() {
+  return getFiscalBancoOrdensIndex().reqBaseToPedidos;
+}
+
 function loadFiscalItemsFromBancoOrdens(identifiers) {
   const list = Array.isArray(identifiers) ? identifiers : [];
   const normalized = list.map((value) => String(value || '').trim()).filter(Boolean);
@@ -3126,14 +7267,14 @@ function loadFiscalItemsFromBancoOrdens(identifiers) {
     throw new Error(`BancoDeOrdens nao encontrado: ${bancoOrdensPath}`);
   }
 
-  const workbook = XLSX.readFile(bancoOrdensPath, { cellDates: true });
+  const { workbook } = readWorkbookCached(bancoOrdensPath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) {
     throw new Error('Planilha BancoDeOrdens sem abas validas.');
   }
 
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: '' });
+  const rows = sheetToAoaFast(worksheet);
   const items = [];
 
   rows.forEach((row) => {
@@ -3169,14 +7310,14 @@ function appendRowsToBancoPedidos(rowsToAppend) {
     throw new Error(`Banco Pedidos nao encontrado: ${bancoPedidosPath}`);
   }
 
-  const workbook = XLSX.readFile(bancoPedidosPath, { cellDates: true });
+  const { workbook } = readWorkbookCached(bancoPedidosPath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) {
     throw new Error('Banco Pedidos sem abas validas.');
   }
 
-  const existing = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: '' });
+  const existing = sheetToAoaFast(worksheet);
   let lastUsedRow = 0;
   existing.forEach((row, index) => {
     const hasValue = Array.isArray(row) && row.some((cell) => String(cell || '').trim() !== '');
@@ -3187,30 +7328,18 @@ function appendRowsToBancoPedidos(rowsToAppend) {
 
   const startRow = lastUsedRow + 1;
   XLSX.utils.sheet_add_aoa(worksheet, rowsToAppend, { origin: `A${startRow}` });
-  XLSX.writeFile(workbook, bancoPedidosPath);
+  writeWorkbookFile(workbook, bancoPedidosPath);
 }
 
-function readBancoPedidosRows() {
-  const bancoPedidosPath = resolveFiscalPath(FISCAL_BANK_PEDIDOS_RELATIVE);
-  if (!fs.existsSync(bancoPedidosPath)) {
-    throw new Error(`Banco Pedidos nao encontrado: ${bancoPedidosPath}`);
-  }
-
-  const workbook = XLSX.readFile(bancoPedidosPath, { cellDates: true });
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
-  if (!worksheet) {
-    throw new Error('Banco Pedidos sem abas validas.');
-  }
-
-  const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: '' });
-  const headerRow = aoa[0] || [];
+function parseBancoPedidosRowsFromAoa(aoa) {
+  const safeAoa = Array.isArray(aoa) ? aoa : [];
+  const headerRow = safeAoa[0] || [];
   const looksLikeHeader = normalizeText(headerRow[0]) === 'QNTD' && normalizeText(headerRow[3]) === 'CLIENTE';
   const startIndex = looksLikeHeader ? 1 : 0;
 
   const rows = [];
-  for (let i = startIndex; i < aoa.length; i += 1) {
-    const row = aoa[i] || [];
+  for (let i = startIndex; i < safeAoa.length; i += 1) {
+    const row = safeAoa[i] || [];
     const hasValue = row.some((cell) => String(cell || '').trim() !== '');
     if (!hasValue) {
       continue;
@@ -3233,11 +7362,106 @@ function readBancoPedidosRows() {
     });
   }
 
-  return { workbook, sheetName, worksheet, rows, bancoPedidosPath, looksLikeHeader };
+  return { rows, looksLikeHeader };
+}
+
+function readBancoPedidosRowsLite() {
+  const bancoPedidosPath = resolveFiscalPath(FISCAL_BANK_PEDIDOS_RELATIVE);
+  if (!fs.existsSync(bancoPedidosPath)) {
+    throw new Error(`Banco Pedidos nao encontrado: ${bancoPedidosPath}`);
+  }
+
+  const mtimeMs = getFileMtimeMs(bancoPedidosPath);
+  if (
+    Array.isArray(FISCAL_BANCO_PEDIDOS_LITE_CACHE.rows)
+    && FISCAL_BANCO_PEDIDOS_LITE_CACHE.filePath === bancoPedidosPath
+    && FISCAL_BANCO_PEDIDOS_LITE_CACHE.mtimeMs === mtimeMs
+  ) {
+    return {
+      bancoPedidosPath,
+      mtimeMs,
+      rows: FISCAL_BANCO_PEDIDOS_LITE_CACHE.rows,
+      looksLikeHeader: !!FISCAL_BANCO_PEDIDOS_LITE_CACHE.looksLikeHeader
+    };
+  }
+
+  const diskCache = readFastCache('fiscal-banco-pedidos-rows', bancoPedidosPath, mtimeMs);
+  if (diskCache && Array.isArray(diskCache.rows)) {
+    const rows = diskCache.rows;
+    const looksLikeHeader = !!diskCache.looksLikeHeader;
+    FISCAL_BANCO_PEDIDOS_LITE_CACHE = { filePath: bancoPedidosPath, mtimeMs, rows, looksLikeHeader };
+    return { bancoPedidosPath, mtimeMs, rows, looksLikeHeader };
+  }
+
+  const { workbook } = readWorkbookCached(bancoPedidosPath);
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error('Banco Pedidos sem abas validas.');
+  }
+
+  const aoa = sheetToAoaFast(worksheet);
+  const parsed = parseBancoPedidosRowsFromAoa(aoa);
+  FISCAL_BANCO_PEDIDOS_LITE_CACHE = {
+    filePath: bancoPedidosPath,
+    mtimeMs,
+    rows: parsed.rows,
+    looksLikeHeader: parsed.looksLikeHeader
+  };
+  writeFastCache('fiscal-banco-pedidos-rows', bancoPedidosPath, mtimeMs, {
+    looksLikeHeader: parsed.looksLikeHeader,
+    rows: parsed.rows
+  });
+  return { bancoPedidosPath, mtimeMs, rows: parsed.rows, looksLikeHeader: parsed.looksLikeHeader };
+}
+
+function readBancoPedidosRows() {
+  const bancoPedidosPath = resolveFiscalPath(FISCAL_BANK_PEDIDOS_RELATIVE);
+  if (!fs.existsSync(bancoPedidosPath)) {
+    throw new Error(`Banco Pedidos nao encontrado: ${bancoPedidosPath}`);
+  }
+
+  const { workbook, mtimeMs } = readWorkbookCached(bancoPedidosPath);
+  if (
+    FISCAL_BANCO_PEDIDOS_ROWS_CACHE.result
+    && FISCAL_BANCO_PEDIDOS_ROWS_CACHE.filePath === bancoPedidosPath
+    && FISCAL_BANCO_PEDIDOS_ROWS_CACHE.mtimeMs === mtimeMs
+  ) {
+    return FISCAL_BANCO_PEDIDOS_ROWS_CACHE.result;
+  }
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error('Banco Pedidos sem abas validas.');
+  }
+
+  const aoa = sheetToAoaFast(worksheet);
+  const parsed = parseBancoPedidosRowsFromAoa(aoa);
+
+  const result = {
+    workbook,
+    sheetName,
+    worksheet,
+    rows: parsed.rows,
+    bancoPedidosPath,
+    looksLikeHeader: parsed.looksLikeHeader
+  };
+  FISCAL_BANCO_PEDIDOS_ROWS_CACHE = { filePath: bancoPedidosPath, mtimeMs, result };
+  FISCAL_BANCO_PEDIDOS_LITE_CACHE = {
+    filePath: bancoPedidosPath,
+    mtimeMs,
+    rows: parsed.rows,
+    looksLikeHeader: parsed.looksLikeHeader
+  };
+  writeFastCache('fiscal-banco-pedidos-rows', bancoPedidosPath, mtimeMs, {
+    looksLikeHeader: parsed.looksLikeHeader,
+    rows: parsed.rows
+  });
+  return result;
 }
 
 function listNfsFromBancoPedidos() {
-  const { rows } = readBancoPedidosRows();
+  const { rows } = readBancoPedidosRowsLite();
   const map = new Map();
 
   rows.forEach((row) => {
@@ -3288,6 +7512,13 @@ function listNfsFromBancoPedidos() {
     }
   });
 
+  let pedidoToReqs = null;
+  try {
+    pedidoToReqs = getFiscalPedidoToReqsIndex();
+  } catch (error) {
+    pedidoToReqs = null;
+  }
+
   const list = Array.from(map.values()).map((entry) => {
     const pedidos = Array.from(entry.pedidos || []);
     pedidos.sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true }));
@@ -3296,15 +7527,20 @@ function listNfsFromBancoPedidos() {
       : pedidos.join(' | ');
 
     let reqsLabel = '';
-    try {
-      const ordensItems = loadFiscalItemsFromBancoOrdens(pedidos);
-      const reqs = Array.from(new Set(ordensItems.map((item) => String(item.req || '').trim()).filter(Boolean)));
+    if (pedidoToReqs) {
+      const reqSet = new Set();
+      pedidos.forEach((pedido) => {
+        const reqs = pedidoToReqs.get(String(pedido));
+        if (!reqs) {
+          return;
+        }
+        reqs.forEach((req) => reqSet.add(String(req)));
+      });
+      const reqs = Array.from(reqSet).map((req) => String(req || '').trim()).filter(Boolean);
       reqs.sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true }));
       reqsLabel = reqs.length > 10
         ? `${reqs.slice(0, 10).join(' | ')} | +${reqs.length - 10}`
         : reqs.join(' | ');
-    } catch (error) {
-      reqsLabel = '';
     }
 
     return {
@@ -3329,7 +7565,7 @@ function getNfItemsFromBancoPedidos(nf) {
     return [];
   }
 
-  const { rows } = readBancoPedidosRows();
+  const { rows } = readBancoPedidosRowsLite();
   return rows
     .filter((row) => String(row.nf || '').trim() === target)
     .map((row) => ({
@@ -3395,7 +7631,7 @@ function updateNfInBancoPedidos({ nf, status, rastreio, dataDespache, editorUser
   }
 
   workbook.Sheets[sheetName] = worksheet;
-  XLSX.writeFile(workbook, bancoPedidosPath);
+  writeWorkbookFile(workbook, bancoPedidosPath);
   return updated;
 }
 
@@ -3430,7 +7666,7 @@ function buildBancoPedidosIndexes(rows) {
 }
 
 function validateFiscalCadastro({ nf, itemsToInsert }) {
-  const { rows } = readBancoPedidosRows();
+  const { rows } = readBancoPedidosRowsLite();
   const { nfSet, pedidoSet, itemKeySet } = buildBancoPedidosIndexes(rows);
 
   const normalizedNf = normalizeId(nf);
@@ -3569,7 +7805,7 @@ function deleteNfFromBancoPedidos({ nf, reason, editorUser, editorAt }) {
   const hora = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
   const { workbook, sheetName, worksheet, bancoPedidosPath } = readBancoPedidosRows();
-  const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: '' });
+  const aoa = sheetToAoaFast(worksheet);
 
   const headerRow = aoa[0] || [];
   const hasHeader = normalizeText(headerRow[0]) === 'QNTD' && normalizeText(headerRow[3]) === 'CLIENTE';
@@ -3601,7 +7837,7 @@ function deleteNfFromBancoPedidos({ nf, reason, editorUser, editorAt }) {
 
   const nextWs = XLSX.utils.aoa_to_sheet(kept);
   workbook.Sheets[sheetName] = nextWs;
-  XLSX.writeFile(workbook, bancoPedidosPath);
+  writeWorkbookFile(workbook, bancoPedidosPath);
 
   return deleted.length;
 }
@@ -3612,13 +7848,13 @@ function listDeletedNfHistory() {
     throw new Error(`Banco Pedidos nao encontrado: ${bancoPedidosPath}`);
   }
 
-  const workbook = XLSX.readFile(bancoPedidosPath, { cellDates: true });
+  const { workbook } = readWorkbookCached(bancoPedidosPath);
   const ws = workbook.Sheets['FISCAL_HISTORICO'];
   if (!ws) {
     return [];
   }
 
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  const aoa = sheetToAoaFast(ws);
   if (!aoa.length) {
     return [];
   }
@@ -3651,7 +7887,7 @@ function findNfsByPedidoOrReq(identifier) {
     return [];
   }
 
-  const { rows } = readBancoPedidosRows();
+  const { rows } = readBancoPedidosRowsLite();
   const pedidoToNfs = new Map();
   rows.forEach((row) => {
     const pedido = String(row.pedido || '').trim();
@@ -3676,28 +7912,9 @@ function findNfsByPedidoOrReq(identifier) {
 
   let pedidos = [];
   try {
-    const bancoOrdensPath = resolveFiscalPath(FISCAL_BANCO_ORDENS_RELATIVE);
-    if (!fs.existsSync(bancoOrdensPath)) {
-      return [];
-    }
-
-    const workbook = XLSX.readFile(bancoOrdensPath, { cellDates: true });
-    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!worksheet) {
-      return [];
-    }
-
-    const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: '' });
-    const pedidoSet = new Set();
-    aoa.forEach((row) => {
-      const pedido = String(row[3] || '').trim();
-      const req = String(row[4] || '').trim();
-      const base = extractReqBase(req);
-      if (pedido && base === reqBase) {
-        pedidoSet.add(pedido);
-      }
-    });
-    pedidos = Array.from(pedidoSet);
+    const reqBaseToPedidos = getFiscalReqBaseToPedidosIndex();
+    const pedidoSet = reqBaseToPedidos.get(reqBase);
+    pedidos = pedidoSet ? Array.from(pedidoSet) : [];
   } catch (error) {
     pedidos = [];
   }
@@ -3835,6 +8052,391 @@ app.whenReady().then(() => {
     return exportPcpDashboardPdf(event.sender, payload || {});
   });
 
+  ipcMain.handle('rh:context', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    return {
+      ok: true,
+      username: ctx.username,
+      role: ctx.role,
+      allowedSectorId: ctx.allowedSectorId,
+      canEdit: ctx.canEdit,
+      dbFilePath: ctx.dbFilePath,
+      config: ctx.config
+    };
+  });
+
+  ipcMain.handle('rh:setores:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    return { setores: listRhSetoresFromSnapshot(ctx, snapshot) };
+  });
+
+  ipcMain.handle('rh:setores:upsert', (_, payload) => {
+    return upsertRhSetor({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim(),
+      nome_setor: String((payload && payload.nome_setor) || '').trim(),
+      gestor_responsavel: String((payload && payload.gestor_responsavel) || '').trim(),
+      centro_custo: String((payload && payload.centro_custo) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:setores:delete', (_, payload) => {
+    return deleteRhSetor({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:colaboradores:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    return { colaboradores: listRhColaboradoresFromSnapshot(ctx, snapshot) };
+  });
+
+  ipcMain.handle('rh:colaboradores:upsert', (_, payload) => {
+    return upsertRhColaborador({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim(),
+      nome: String((payload && payload.nome) || '').trim(),
+      matricula: String((payload && payload.matricula) || '').trim(),
+      setor_id: String((payload && payload.setor_id) || '').trim(),
+      cargo: String((payload && payload.cargo) || '').trim(),
+      status: String((payload && payload.status) || '').trim(),
+      data_admissao: String((payload && payload.data_admissao) || '').trim(),
+      limite_mensal: String((payload && payload.limite_mensal) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:colaboradores:toggleStatus', (_, payload) => {
+    return toggleRhColaboradorStatus({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:colaboradores:delete', (_, payload) => {
+    return deleteRhColaborador({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:he:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    const month = String((payload && payload.month) || '').trim();
+    const setorId = String((payload && payload.setorId) || '').trim();
+    const colaboradorId = String((payload && payload.colaboradorId) || '').trim();
+    const tipoHora = String((payload && payload.tipoHora) || '').trim();
+    const rows = listRhHorasExtrasFromSnapshot(ctx, snapshot, { month, setorId, colaboradorId, tipoHora });
+    return { rows };
+  });
+
+  ipcMain.handle('rh:atrasos:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    const month = String((payload && payload.month) || '').trim();
+    const setorId = String((payload && payload.setorId) || '').trim();
+    const colaboradorId = String((payload && payload.colaboradorId) || '').trim();
+    const rows = listRhAtrasosFromSnapshot(ctx, snapshot, { month, setorId, colaboradorId });
+    return { rows };
+  });
+
+  ipcMain.handle('rh:he:upsert', (_, payload) => {
+    return upsertRhHoraExtra({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim(),
+      colaborador_id: String((payload && payload.colaborador_id) || '').trim(),
+      data: String((payload && payload.data) || '').trim(),
+      quantidade_horas: Number((payload && payload.quantidade_horas) || 0),
+      tipo_hora: String((payload && payload.tipo_hora) || '').trim(),
+      observacao: String((payload && payload.observacao) || '').trim(),
+      justificativa: String((payload && payload.justificativa) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:atrasos:upsert', (_, payload) => {
+    return upsertRhAtraso({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim(),
+      colaborador_id: String((payload && payload.colaborador_id) || '').trim(),
+      data: String((payload && payload.data) || '').trim(),
+      quantidade_horas: Number((payload && payload.quantidade_horas) || 0),
+      observacao: String((payload && payload.observacao) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:solicitacoes:he:upsert', async (_, payload) => {
+    const result = upsertRhSolicitacaoHe({
+      ...(payload || {}),
+      username: String((payload && payload.username) || '').trim()
+    });
+
+    try {
+      const pdfFilePath = await generateRhSolicitacaoHePdf(result.row);
+      return { ...result, pdfFilePath };
+    } catch (error) {
+      // Mantém o registro salvo, mas devolve o erro para o usuário poder corrigir (permissão/pasta) e gerar novamente.
+      throw new Error(`Solicitação salva, mas não consegui gerar o PDF: ${error.message || error}`);
+    }
+  });
+
+  ipcMain.handle('rh:solicitacoes:he:list', (_, payload) => {
+    return listRhSolicitacoesHe({
+      username: String((payload && payload.username) || '').trim(),
+      filters: payload && payload.filters ? payload.filters : (payload || {})
+    });
+  });
+
+  ipcMain.handle('rh:solicitacoes:he:delete', (_, payload) => {
+    return deleteRhSolicitacaoHe({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:solicitacoes:he:pdf:regen', async (_, payload) => {
+    return regenRhSolicitacaoHePdf({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:solicitacoes:he:pdf:open', async (_, payload) => {
+    return openRhSolicitacaoHePdf({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:he:delete', (_, payload) => {
+    return deleteRhHoraExtra({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:kpis', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    const month = String((payload && payload.month) || '').trim();
+    const setorId = String((payload && payload.setorId) || '').trim();
+    const colaboradorId = String((payload && payload.colaboradorId) || '').trim();
+    const tipoHora = String((payload && payload.tipoHora) || '').trim();
+    return { kpis: computeRhKpisFromSnapshot(ctx, snapshot, { month, setorId, colaboradorId, tipoHora }) };
+  });
+
+  ipcMain.handle('rh:atrasos:kpis', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    const month = String((payload && payload.month) || '').trim();
+    const setorId = String((payload && payload.setorId) || '').trim();
+    const colaboradorId = String((payload && payload.colaboradorId) || '').trim();
+    return { kpis: computeRhAtrasosKpisFromSnapshot(ctx, snapshot, { month, setorId, colaboradorId }) };
+  });
+
+  ipcMain.handle('rh:users:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { workbook } = readRhDb();
+    const users = listRhUsers(workbook);
+    const visible = ctx.canEdit ? users : users.filter((u) => normalizeUsername(u.username) === normalizeUsername(ctx.username));
+    return { users: visible };
+  });
+
+  ipcMain.handle('rh:users:upsert', (_, payload) => {
+    return upsertRhUserRule({
+      username: String((payload && payload.username) || '').trim(),
+      target: String((payload && payload.target) || '').trim(),
+      role: String((payload && payload.role) || '').trim(),
+      setor_id: String((payload && payload.setor_id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:users:delete', (_, payload) => {
+    return deleteRhUserRule({
+      username: String((payload && payload.username) || '').trim(),
+      target: String((payload && payload.target) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:config:get', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    return { config: snapshot && snapshot.config ? snapshot.config : {} };
+  });
+
+  ipcMain.handle('rh:config:set', (_, payload) => {
+    return setRhConfig({
+      username: String((payload && payload.username) || '').trim(),
+      config: payload && payload.config ? payload.config : {}
+    });
+  });
+
+  ipcMain.handle('rh:audit:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const limit = Math.max(1, Math.min(500, Number((payload && payload.limit) || 200)));
+    const { workbook } = readRhDb();
+    const objs = readSheetObjects(workbook, 'AUDIT_LOG');
+    const rows = objs
+      .map((r) => ({
+        id: String(r.ID || '').trim(),
+        data_hora: String(r.DATA_HORA || '').trim(),
+        username: String(r.USERNAME || '').trim(),
+        action: String(r.ACTION || '').trim(),
+        entity: String(r.ENTITY || '').trim(),
+        entity_id: String(r.ENTITY_ID || '').trim()
+      }))
+      .filter((r) => r.data_hora)
+      .sort((a, b) => String(b.data_hora).localeCompare(String(a.data_hora)));
+
+    const visible = ctx.canEdit ? rows : rows.slice(0, limit);
+    return { rows: visible.slice(0, limit) };
+  });
+
+  ipcMain.handle('rh:export:excel', async (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false });
+    const { snapshot } = readRhSnapshot();
+    const config = snapshot && snapshot.config ? snapshot.config : {};
+    const month = String((payload && payload.month) || '').trim();
+    const setorId = String((payload && payload.setorId) || '').trim();
+    const colaboradorId = String((payload && payload.colaboradorId) || '').trim();
+    const tipoHora = String((payload && payload.tipoHora) || '').trim();
+    const suggestedName = String((payload && payload.suggestedName) || '').trim() || `rh-he-${month}.xlsx`;
+
+    const rows = listRhHorasExtrasFromSnapshot(ctx, snapshot, { month, setorId, colaboradorId, tipoHora });
+    const colaboradores = listRhColaboradoresFromSnapshot(ctx, snapshot);
+    const setores = listRhSetoresFromSnapshot(ctx, snapshot);
+    const collabById = new Map(colaboradores.map((c) => [String(c.id), c]));
+    const setorById = new Map(setores.map((s) => [String(s.id), s]));
+    const totalsByColabId = new Map();
+    rows.forEach((r) => {
+      const key = String(r.colaborador_id || '').trim();
+      if (!key) {
+        return;
+      }
+      totalsByColabId.set(key, (totalsByColabId.get(key) || 0) + (Number(r.quantidade_horas) || 0));
+    });
+
+    const exportAoa = [[
+      'DATA',
+      'COLABORADOR',
+      'SETOR',
+      'HORAS',
+      'MARGEM_FAIXA',
+      'MARGEM_PERCENT',
+      'TIPO',
+      'OBSERVACAO',
+      'JUSTIFICATIVA',
+      'CRIADO_POR',
+      'DATA_REGISTRO'
+    ]];
+    rows.forEach((r) => {
+      const collab = collabById.get(String(r.colaborador_id));
+      const setorIdForCollab = collab ? String(collab.setor_id || '').trim() : '';
+      const setor = setorIdForCollab && setorById.get(setorIdForCollab) ? String(setorById.get(setorIdForCollab).nome_setor || '').trim() : '';
+      const monthTotal = totalsByColabId.get(String(r.colaborador_id || '').trim()) || 0;
+      const margin = getRhMarginForHours(config, monthTotal);
+      exportAoa.push([
+        String(r.data || '').trim(),
+        collab ? String(collab.nome || '').trim() : '',
+        setor,
+        Number(r.quantidade_horas || 0),
+        String(margin.faixa || '').trim(),
+        Number(margin.percent || 0),
+        String(r.tipo_hora || '').trim(),
+        String(r.observacao || '').trim(),
+        String(r.justificativa || '').trim(),
+        String(r.criado_por || '').trim(),
+        String(r.data_registro || '').trim()
+      ]);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(exportAoa);
+    XLSX.utils.book_append_sheet(wb, ws, 'HORAS_EXTRAS');
+
+    const defaultPath = path.join(app.getPath('downloads'), suggestedName);
+    const saveResult = await dialog.showSaveDialog({
+      title: 'Salvar exportação RH (Excel)',
+      defaultPath,
+      filters: [{ name: 'Planilha Excel', extensions: ['xlsx'] }]
+    });
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { canceled: true };
+    }
+    writeWorkbookFile(wb, saveResult.filePath);
+    return { canceled: false, filePath: saveResult.filePath };
+  });
+
+  ipcMain.handle('rh:import:interno', (_, payload) => {
+    return importRhPontoInterno({
+      username: String((payload && payload.username) || '').trim(),
+      date: String((payload && payload.date) || '').trim(),
+      workbookPath: String((payload && payload.workbookPath) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:import:pickWorkbook', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Selecionar planilha base (RH)',
+      properties: ['openFile'],
+      filters: [{ name: 'Planilha Excel', extensions: ['xlsx', 'xlsm', 'xls'] }]
+    });
+
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle('rh:export:pdf', async (event, payload) => {
+    // Reaproveita o exportador de PDF já existente (printToPDF).
+    return exportPcpDashboardPdf(event.sender, {
+      ...(payload || {}),
+      dialogTitle: 'Salvar exportação RH em PDF'
+    });
+  });
+
+  ipcMain.handle('rh:access:request', (_, payload) => {
+    return createRhAccessRequest({
+      username: String((payload && payload.username) || '').trim(),
+      requested_role: String((payload && payload.requested_role) || '').trim(),
+      requested_setor_id: String((payload && payload.requested_setor_id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('rh:access:requests:list', (_, payload) => {
+    const username = String((payload && payload.username) || '').trim();
+    const ctx = ensureRhAccess(username, { requireEdit: false, allowUnconfigured: true });
+    const { workbook } = readRhDb();
+    const all = listRhAccessRequests(workbook)
+      .sort((a, b) => String(b.requested_at).localeCompare(String(a.requested_at)));
+
+    const visible = ctx.canEdit ? all : all.filter((r) => r.username === ctx.username);
+    return { rows: visible.slice(0, 200) };
+  });
+
+  ipcMain.handle('rh:access:requests:decide', (_, payload) => {
+    return decideRhAccessRequest({
+      username: String((payload && payload.username) || '').trim(),
+      requestId: String((payload && payload.requestId) || '').trim(),
+      decision: String((payload && payload.decision) || '').trim()
+    });
+  });
+
   ipcMain.handle('fiscal:list-nfs', () => {
     const list = listNfsFromBancoPedidos();
     return { nfs: list };
@@ -3957,6 +8559,25 @@ app.whenReady().then(() => {
     const identifier = String((payload && payload.identifier) || '').trim();
     const nfs = findNfsByPedidoOrReq(identifier);
     return { nfs };
+  });
+
+  ipcMain.handle('fiscal:tracking:lookup', async (_, payload) => {
+    const code = normalizeTrackingCode(payload && payload.code);
+    if (!code || !looksLikeCorreiosTrackingCode(code)) {
+      throw new Error('Codigo de rastreio invalido. Ex: AA123456789BR');
+    }
+
+    const settings = loadSettings();
+    const apiKey = String(settings.trackingApiKey || '').trim().replace(/^Bearer\s+/i, '');
+    if (!apiKey) {
+      throw new Error('Configure a chave da API de rastreio na aba Configuracao (SeuRastreio).');
+    }
+
+    const tracking = await trackSeurastreio(code, apiKey);
+    return {
+      ...tracking,
+      fiscal: findFiscalInfoByTrackingCode(code)
+    };
   });
 
   createWindow();

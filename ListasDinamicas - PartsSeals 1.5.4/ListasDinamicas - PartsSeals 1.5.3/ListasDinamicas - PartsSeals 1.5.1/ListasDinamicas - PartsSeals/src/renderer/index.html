@@ -36,6 +36,7 @@
         <button id="tab-main" class="tab active" data-tab="main" type="button">Listagem</button>
         <button id="tab-pcp" class="tab" data-tab="pcp" type="button">PCP</button>
         <button id="tab-fiscal" class="tab" data-tab="fiscal" type="button">FISCAL</button>
+        <button id="tab-rh" class="tab" data-tab="rh" type="button">RH</button>
         <button id="tab-settings" class="tab" data-tab="settings" type="button">Configuração</button>
         <button id="tab-log" class="tab" data-tab="log" type="button">LOG Atualizações</button>
       </nav>
@@ -148,6 +149,10 @@
                 <button id="btn-select-fiscal-root" class="btn secondary" type="button">Selecionar</button>
               </div>
             </div>
+            <div class="field">
+              <label for="tracking-api-key-input">Chave API Rastreio (SeuRastreio)</label>
+              <input id="tracking-api-key-input" type="password" placeholder="Cole sua chave (ex: sr_live_...)" />
+            </div>
             <div class="actions">
               <button id="btn-save-settings" class="btn primary" type="button">Salvar configuração</button>
             </div>
@@ -177,26 +182,255 @@
         </section>
         <section id="panel-fiscal" class="panel">
           <div class="card">
-            <div class="log-header">
-              <h2>FISCAL</h2>
-              <p id="fiscal-subtitle">Cadastro de NF e controle do banco de pedidos.</p>
+            <div id="fiscal-menu-view">
+              <div class="log-header">
+                <h2>FISCAL</h2>
+                <p>Selecione uma ferramenta para abrir.</p>
+              </div>
+              <div class="pcp-tool-grid">
+                <button id="fiscal-open-nfs" class="pcp-tool-btn" type="button">
+                  <strong>NFs</strong>
+                  <span>Listagem, detalhes, pendências, histórico e rastreio.</span>
+                </button>
+              </div>
             </div>
-            <div class="pcp-top-actions">
-              <button id="fiscal-btn-cadastrar-nf" class="btn primary" type="button">Cadastrar NF</button>
-              <button id="fiscal-btn-pesquisar-nf" class="btn secondary" type="button">Pesquisar NF</button>
-              <button id="fiscal-btn-pendencias" class="btn secondary" type="button">Pendências</button>
-              <button id="fiscal-btn-historico" class="btn secondary" type="button">Histórico</button>
-              <button id="fiscal-btn-voltar" class="btn secondary" type="button" hidden>Voltar</button>
-              <button id="fiscal-btn-editar-nf" class="btn secondary" type="button" hidden>Editar NF</button>
-              <button id="fiscal-btn-apagar-nf" class="btn secondary" type="button" hidden>Apagar NF</button>
+
+            <div id="fiscal-nfs-view" hidden>
+              <div class="log-header">
+                <h2>FISCAL</h2>
+                <p id="fiscal-subtitle">Cadastro de NF e controle do banco de pedidos.</p>
+              </div>
+              <div class="pcp-top-actions">
+                <button id="fiscal-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="fiscal-btn-cadastrar-nf" class="btn primary" type="button">Cadastrar NF</button>
+                <button id="fiscal-btn-pesquisar-nf" class="btn secondary" type="button">Pesquisar NF</button>
+                <button id="fiscal-btn-pendencias" class="btn secondary" type="button">Pendências</button>
+                <button id="fiscal-btn-historico" class="btn secondary" type="button">Histórico</button>
+                <button id="fiscal-btn-voltar" class="btn secondary" type="button" hidden>Voltar</button>
+                <button id="fiscal-btn-editar-nf" class="btn secondary" type="button" hidden>Editar NF</button>
+                <button id="fiscal-btn-apagar-nf" class="btn secondary" type="button" hidden>Apagar NF</button>
+              </div>
+
+              <div class="fiscal-tracking-box">
+                <div class="field">
+                  <label for="fiscal-tracking-code">Rastreio SEDEX</label>
+                  <div class="inline">
+                    <input id="fiscal-tracking-code" type="text" placeholder="Ex: AA123456789BR" />
+                    <button id="fiscal-tracking-check" class="btn secondary" type="button">Consultar</button>
+                  </div>
+                  <p id="fiscal-tracking-result" class="field-note">Informe um código de rastreio para consultar.</p>
+                </div>
+              </div>
+
+              <p id="fiscal-empty-state" class="pcp-empty-state">Clique em Cadastrar NF para iniciar.</p>
+              <div id="fiscal-breadcrumb" class="pcp-breadcrumb"></div>
+              <div class="table-wrapper pcp-table-wrapper">
+                <table id="fiscal-table" class="pcp-table">
+                  <thead id="fiscal-table-head"></thead>
+                  <tbody id="fiscal-table-body"></tbody>
+                </table>
+              </div>
             </div>
-            <p id="fiscal-empty-state" class="pcp-empty-state">Clique em Cadastrar NF para iniciar.</p>
-            <div id="fiscal-breadcrumb" class="pcp-breadcrumb"></div>
-            <div class="table-wrapper pcp-table-wrapper">
-              <table id="fiscal-table" class="pcp-table">
-                <thead id="fiscal-table-head"></thead>
-                <tbody id="fiscal-table-body"></tbody>
-              </table>
+          </div>
+        </section>
+        <section id="panel-rh" class="panel">
+          <div class="card">
+            <div id="rh-menu-view">
+              <div class="log-header">
+                <h2>RH</h2>
+                <p>Selecione uma ferramenta para abrir.</p>
+              </div>
+              <div class="pcp-tool-grid">
+                <button id="rh-open-he" class="pcp-tool-btn" type="button">
+                  <strong>Gestão de Horas Extras (H.E)</strong>
+                  <span>Cadastro de setores e colaboradores, lançamento diário e KPIs gerenciais.</span>
+                </button>
+                <button id="rh-open-solic-he" class="pcp-tool-btn" type="button">
+                  <strong>Solicitar Horas Extras</strong>
+                  <span>Formulário de solicitação com geração automática de PDF e consulta por filtros.</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="rh-he-view" hidden>
+              <div class="log-header">
+                <h2>RH - Gestão de Horas Extras</h2>
+                <p id="rh-he-subtitle">Controle mensal por colaborador e setor.</p>
+              </div>
+               <div class="pcp-top-actions pcp-eff-toolbar">
+                 <button id="rh-he-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                 <button id="rh-he-refresh" class="btn primary" type="button">Atualizar</button>
+                 <button id="rh-he-add" class="btn secondary" type="button">Lançar H.E</button>
+                 <button id="rh-he-import" class="btn secondary" type="button">Importar dados</button>
+                 <button id="rh-he-export-excel" class="btn secondary" type="button">Exportar Excel</button>
+                 <button id="rh-he-export-pdf" class="btn secondary" type="button">Exportar PDF</button>
+                 <div class="pcp-eff-list-wrap">
+                   <label for="rh-filter-month">Mês</label>
+                   <input id="rh-filter-month" type="month" />
+                </div>
+                <div class="pcp-eff-list-wrap">
+                  <label for="rh-filter-sector">Setor</label>
+                  <select id="rh-filter-sector"></select>
+                </div>
+                <div class="pcp-eff-list-wrap">
+                  <label for="rh-filter-collab">Colaborador</label>
+                  <select id="rh-filter-collab"></select>
+                </div>
+                 <div class="pcp-eff-list-wrap">
+                   <label for="rh-filter-type">Tipo</label>
+                   <select id="rh-filter-type">
+                     <option value="">Todos</option>
+                     <option value="50%">50%</option>
+                     <option value="60%">60%</option>
+                     <option value="80%">80%</option>
+                     <option value="100%">100%</option>
+                     <option value="ponto_interno">Ponto interno</option>
+                     <option value="banco">Banco de horas</option>
+                     <option value="outro">Outro</option>
+                   </select>
+                 </div>
+               </div>
+
+              <div class="rh-subtabs" role="tablist" aria-label="Visões RH">
+                <button id="rh-subtab-dashboard" class="rh-subtab active" type="button" data-rh-view="dashboard">Dashboard H.E</button>
+                <button id="rh-subtab-atrasos" class="rh-subtab" type="button" data-rh-view="atrasos">Dashboard atrasos</button>
+                <button id="rh-subtab-registros" class="rh-subtab" type="button" data-rh-view="registros">Registros</button>
+                <button id="rh-subtab-colaboradores" class="rh-subtab" type="button" data-rh-view="colaboradores">Colaboradores</button>
+                <button id="rh-subtab-setores" class="rh-subtab" type="button" data-rh-view="setores">Setores</button>
+                <button id="rh-subtab-config" class="rh-subtab" type="button" data-rh-view="config">Acesso/Config</button>
+                <button id="rh-subtab-audit" class="rh-subtab" type="button" data-rh-view="audit">Auditoria</button>
+              </div>
+
+              <div id="rh-view-dashboard" class="rh-view"></div>
+              <div id="rh-view-atrasos" class="rh-view" hidden></div>
+              <div id="rh-view-registros" class="rh-view" hidden></div>
+              <div id="rh-view-colaboradores" class="rh-view" hidden></div>
+              <div id="rh-view-setores" class="rh-view" hidden></div>
+              <div id="rh-view-config" class="rh-view" hidden></div>
+              <div id="rh-view-audit" class="rh-view" hidden></div>
+            </div>
+
+            <div id="rh-solic-he-view" hidden>
+              <div class="log-header">
+                <h2>RH - Solicitação de Horas Extras</h2>
+                <p id="rh-solic-he-subtitle">Crie, edite e consulte solicitações com PDF automático.</p>
+              </div>
+              <div class="pcp-top-actions pcp-eff-toolbar">
+                <button id="rh-solic-he-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="rh-solic-he-refresh" class="btn primary" type="button">Atualizar</button>
+                <button id="rh-solic-he-new" class="btn secondary" type="button">Nova solicitação</button>
+              </div>
+
+              <div class="rh-subtabs" role="tablist" aria-label="Solicitações de H.E">
+                <button id="rh-solic-he-tab-form" class="rh-subtab active" type="button">Solicitar</button>
+                <button id="rh-solic-he-tab-consulta" class="rh-subtab" type="button">Consultar</button>
+              </div>
+
+              <div id="rh-solic-he-view-form" class="rh-view">
+                <div class="card form-card rh-solic-he-form">
+                  <div class="log-header" style="margin-bottom: 10px;">
+                    <h2 style="font-size: 18px; margin: 0;">Formulário de Solicitação</h2>
+                    <p style="margin: 6px 0 0;">Preencha os dados e salve para gerar o PDF automaticamente.</p>
+                  </div>
+                  <input id="rh-solic-he-id" type="hidden" />
+                  <div class="field">
+                    <label for="rh-solic-he-numero">Número do documento</label>
+                    <input id="rh-solic-he-numero" type="text" readonly placeholder="Gerado ao salvar" />
+                  </div>
+                  <div class="field">
+                    <label for="rh-solic-he-datahe">Data da Hora Extra</label>
+                    <input id="rh-solic-he-datahe" type="date" />
+                  </div>
+                  <div class="field">
+                    <label for="rh-solic-he-colab">Colaborador</label>
+                    <select id="rh-solic-he-colab"></select>
+                  </div>
+                  <div class="field">
+                    <label for="rh-solic-he-setor">Setor</label>
+                    <input id="rh-solic-he-setor" type="text" readonly placeholder="Selecionado automaticamente" />
+                  </div>
+                  <div class="field rh-solic-he-finalidade-field">
+                    <label for="rh-solic-he-finalidade">Finalidade da Hora Extra</label>
+                    <textarea id="rh-solic-he-finalidade" rows="5" placeholder="Descreva o motivo/finalidade"></textarea>
+                  </div>
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-inicio">Horário de Início</label>
+                      <input id="rh-solic-he-inicio" type="time" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-fim">Horário de Término</label>
+                      <input id="rh-solic-he-fim" type="time" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-total">Total de horas</label>
+                      <input id="rh-solic-he-total" type="text" readonly placeholder="Calculado automaticamente" />
+                    </div>
+                  </div>
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-solicitante">Solicitante</label>
+                      <input id="rh-solic-he-solicitante" type="text" readonly />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-datasolic">Data da solicitação</label>
+                      <input id="rh-solic-he-datasolic" type="text" readonly />
+                    </div>
+                  </div>
+                  <p id="rh-solic-he-error" class="pcp-modal-error"></p>
+                  <div class="pcp-modal-actions">
+                    <button id="rh-solic-he-cancel" class="btn secondary" type="button">Limpar</button>
+                    <button id="rh-solic-he-save" class="btn primary" type="button">Salvar e gerar PDF</button>
+                  </div>
+                </div>
+              </div>
+              <div id="rh-solic-he-view-consulta" class="rh-view" hidden>
+                <div class="card form-card rh-solic-he-consulta">
+                  <div class="log-header" style="margin-bottom: 10px;">
+                    <h2 style="font-size: 18px; margin: 0;">Consultar solicitações</h2>
+                    <p style="margin: 6px 0 0;">Use os filtros e visualize/edite/gerencie os PDFs.</p>
+                  </div>
+                  <div class="advanced-filter-card" style="grid-template-columns: repeat(12, minmax(0, 1fr));">
+                    <div class="field" style="grid-column: 1 / span 4;">
+                      <label for="rh-solic-he-filter-colab">Colaborador</label>
+                      <select id="rh-solic-he-filter-colab"></select>
+                    </div>
+                    <div class="field" style="grid-column: 5 / span 3;">
+                      <label for="rh-solic-he-filter-setor">Setor</label>
+                      <select id="rh-solic-he-filter-setor"></select>
+                    </div>
+                    <div class="field" style="grid-column: 8 / span 2;">
+                      <label for="rh-solic-he-filter-ini">De</label>
+                      <input id="rh-solic-he-filter-ini" type="date" />
+                    </div>
+                    <div class="field" style="grid-column: 10 / span 2;">
+                      <label for="rh-solic-he-filter-fim">Até</label>
+                      <input id="rh-solic-he-filter-fim" type="date" />
+                    </div>
+                    <div class="field" style="grid-column: 1 / span 4;">
+                      <label for="rh-solic-he-filter-solicitante">Solicitante</label>
+                      <input id="rh-solic-he-filter-solicitante" type="text" placeholder="Ex: JOAO" />
+                    </div>
+                    <div class="field" style="grid-column: 5 / span 3;">
+                      <label for="rh-solic-he-filter-doc">Número do documento</label>
+                      <input id="rh-solic-he-filter-doc" type="text" placeholder="Ex: HE-2026-0001" />
+                    </div>
+                    <div class="actions" style="grid-column: 8 / span 5; gap: 8px; justify-content: flex-end;">
+                      <button id="rh-solic-he-filter-clear" class="btn secondary" type="button">Limpar filtros</button>
+                      <button id="rh-solic-he-filter-apply" class="btn primary" type="button">Aplicar</button>
+                    </div>
+                  </div>
+                </div>
+
+                <p id="rh-solic-he-consulta-error" class="pcp-modal-error"></p>
+                <p id="rh-solic-he-consulta-empty" class="pcp-empty-state" hidden>Nenhuma solicitação encontrada.</p>
+                <div class="table-wrapper pcp-table-wrapper">
+                  <table id="rh-solic-he-table" class="pcp-table">
+                    <thead id="rh-solic-he-table-head"></thead>
+                    <tbody id="rh-solic-he-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -315,6 +549,15 @@
                   <section id="pcp-cnc-overview" class="pcp-dashboard-overview"></section>
                   <section id="pcp-cnc-charts" class="pcp-dashboard-charts"></section>
                 </section>
+                <section id="pcp-rnc-section" class="pcp-moldagem-section">
+                  <div class="log-header pcp-moldagem-inline-header">
+                    <h3>RELATÓRIO RNC</h3>
+                    <p id="pcp-rnc-title">RELATÓRIO RNC</p>
+                  </div>
+                  <p id="pcp-rnc-empty" class="pcp-empty-state">Sem dados de RNC para a data selecionada.</p>
+                  <section id="pcp-rnc-overview" class="pcp-dashboard-overview"></section>
+                  <section id="pcp-rnc-charts" class="pcp-dashboard-charts"></section>
+                </section>
               </div>
             </div>
           </div>
@@ -354,6 +597,8 @@
         </div>
         <p id="app-login-error" class="pcp-modal-error"></p>
         <div class="pcp-modal-actions">
+          <button id="app-login-config" class="btn secondary" type="button">Configuração</button>
+          <button id="app-login-fiscal-root" class="btn secondary" type="button">Caminho Fiscal</button>
           <button id="app-login-confirm" class="btn primary" type="button">Entrar</button>
         </div>
       </div>
@@ -472,6 +717,178 @@
         <div class="pcp-modal-actions">
           <button id="fiscal-delete-cancel" class="btn secondary" type="button">Cancelar</button>
           <button id="fiscal-delete-confirm" class="btn primary" type="button">Continuar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-sector-modal" class="pcp-modal" hidden>
+      <div id="rh-sector-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-sector-title">
+        <h3 id="rh-sector-title">Setor</h3>
+        <p id="rh-sector-subtitle">Cadastre ou edite um setor.</p>
+        <input id="rh-sector-id" type="hidden" />
+        <div class="field">
+          <label for="rh-sector-nome">Nome do setor</label>
+          <input id="rh-sector-nome" type="text" placeholder="Ex: MOLDAGEM" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-sector-gestor">Gestor responsável</label>
+          <input id="rh-sector-gestor" type="text" placeholder="Ex: JOÃO" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-sector-cc">Centro de custo (opcional)</label>
+          <input id="rh-sector-cc" type="text" placeholder="Ex: 01.02.03" autocomplete="off" />
+        </div>
+        <p id="rh-sector-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-sector-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-sector-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-collab-modal" class="pcp-modal" hidden>
+      <div id="rh-collab-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-collab-title">
+        <h3 id="rh-collab-title">Colaborador</h3>
+        <p id="rh-collab-subtitle">Cadastre ou edite um colaborador.</p>
+        <input id="rh-collab-id" type="hidden" />
+        <div class="field">
+          <label for="rh-collab-nome">Nome</label>
+          <input id="rh-collab-nome" type="text" placeholder="Ex: MARIA SILVA" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-matricula">Matrícula (opcional)</label>
+          <input id="rh-collab-matricula" type="text" placeholder="Ex: 1234" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-setor">Setor</label>
+          <select id="rh-collab-setor"></select>
+        </div>
+        <div class="field">
+          <label for="rh-collab-cargo">Cargo</label>
+          <input id="rh-collab-cargo" type="text" placeholder="Ex: OPERADOR" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-admissao">Data admissão</label>
+          <input id="rh-collab-admissao" type="date" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-status">Status</label>
+          <select id="rh-collab-status">
+            <option value="ativo">Ativo</option>
+            <option value="inativo">Inativo</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-collab-limite">Limite mensal (h) (opcional)</label>
+          <input id="rh-collab-limite" type="number" step="0.25" min="0" placeholder="Vazio = limite padrão" />
+        </div>
+        <p id="rh-collab-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-collab-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-collab-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-he-modal" class="pcp-modal" hidden>
+      <div id="rh-he-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-he-title">
+        <h3 id="rh-he-title">Lançamento de Horas Extras</h3>
+        <p id="rh-he-modal-subtitle">Registre horas extras diárias por colaborador.</p>
+        <input id="rh-he-id" type="hidden" />
+        <div class="field">
+          <label for="rh-he-kind">Tipo de lançamento</label>
+          <select id="rh-he-kind">
+            <option value="he">H.E</option>
+            <option value="atraso">Atraso</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-he-colaborador">Colaborador</label>
+          <select id="rh-he-colaborador"></select>
+        </div>
+        <div class="field">
+          <label for="rh-he-data">Data</label>
+          <input id="rh-he-data" type="date" />
+        </div>
+        <div class="field">
+          <label id="rh-he-qtd-label" for="rh-he-qtd">Quantidade de horas</label>
+          <input id="rh-he-qtd" type="text" inputmode="numeric" placeholder="Ex: 1:30" />
+        </div>
+        <div id="rh-he-tipo-field" class="field">
+          <label for="rh-he-tipo">Tipo</label>
+          <select id="rh-he-tipo">
+            <option value="50%">50%</option>
+            <option value="60%">60%</option>
+            <option value="80%">80%</option>
+            <option value="100%">100%</option>
+            <option value="ponto_interno">Ponto interno</option>
+            <option value="banco">Banco de horas</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-he-obs">Observação (opcional)</label>
+          <textarea id="rh-he-obs" rows="3" placeholder="Detalhes do lançamento"></textarea>
+        </div>
+        <div id="rh-he-just-field" class="field">
+          <label for="rh-he-just">Justificativa</label>
+          <textarea id="rh-he-just" rows="3" placeholder="Obrigatória acima do limite configurado"></textarea>
+        </div>
+        <p id="rh-he-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-he-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-he-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-confirm-modal" class="pcp-modal" hidden>
+      <div id="rh-confirm-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-confirm-title">
+        <h3 id="rh-confirm-title">Confirmar operação</h3>
+        <p id="rh-confirm-message">Confirme para continuar.</p>
+        <p id="rh-confirm-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-confirm-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-confirm-ok" class="btn primary" type="button">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-import-modal" class="pcp-modal" hidden>
+      <div id="rh-import-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-import-title">
+        <h3 id="rh-import-title">Importar dados (RH)</h3>
+        <p id="rh-import-subtitle">Importe automaticamente H.E e atrasos diários a partir de uma planilha base.</p>
+
+        <div class="field">
+          <label for="rh-import-source">Fonte</label>
+          <select id="rh-import-source">
+            <option value="ponto_interno">Ponto interno</option>
+            <option value="ponto_cartao" disabled>Ponto cartão (em breve)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-import-date">Data do lançamento</label>
+          <input id="rh-import-date" type="date" />
+        </div>
+        <div class="field">
+          <label for="rh-import-file-path">Planilha base</label>
+          <div class="file-picker" id="rh-import-file-picker">
+            <input id="rh-import-file-path" type="text" placeholder="Nenhum arquivo selecionado" readonly />
+            <button id="rh-import-file-pick" class="btn secondary" type="button">Escolher</button>
+          </div>
+          <input id="rh-import-file" type="file" accept=".xlsx,.xlsm,.xls" hidden />
+          <p class="field-note">Regra (ponto interno): cada aba = um colaborador; célula <strong>S2</strong> contém a H.E do dia; célula <strong>R2</strong> contém o atraso do dia.</p>
+        </div>
+
+        <p id="rh-import-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-import-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-import-confirm" class="btn primary" type="button">Importar</button>
         </div>
       </div>
     </div>
