@@ -22,6 +22,11 @@
   fiscalHistoryRows: [],
   fiscalConfirmMode: null,
   fiscalDeleteReason: '',
+  fiscalComprasTab: 'consulta',
+  fiscalComprasRows: [],
+  fiscalComprasFilters: {},
+  fiscalComprasFornecedores: [],
+  fiscalComprasCan: {},
   pcpSummary: null,
   pcpEfficiencySnapshot: null,
   pcpDashboardSnapshot: null,
@@ -95,6 +100,79 @@ const CNC_MACHINE_COLOR_MAP = {
 };
 const SETTINGS_UNLOCK_PASSWORD = '0604';
 const FEATURE_LOG_GROUPS = [
+  {
+    version: '1.6.4',
+    title: 'Backup - Restauração Segura e UX',
+    date: '19/02/2026',
+    items: [
+      'Backup manual: botão "Executar backup agora" ajustado para forçar execução mesmo quando já houve backup automático no dia.',
+      'Configuração: layout da área de backup reorganizado para visual mais limpo, moderno e corporativo.',
+      'Configuração: botão de backup agora com feedback de execução (estado carregando, texto dinâmico e bloqueio de clique duplo).',
+      'Novo botão "Usar backup" com fluxo de restauração no sistema.',
+      'Restauração: modal com seleção de backup disponível e confirmação obrigatória da senha administrativa 3 vezes.',
+      'Segurança: validação das 3 senhas feita também no backend antes de restaurar arquivos.',
+      'Privacidade: referência visual da senha administrativa removida dos placeholders do modal.'
+    ]
+  },
+  {
+    version: '1.6.3',
+    title: 'Configuração - Backup Automático Diário',
+    date: '19/02/2026',
+    items: [
+      'Configuração: backup automático vinculado à Pasta raiz, sem necessidade de selecionar pasta manualmente.',
+      'Backup salvo automaticamente na subpasta "Backup" dentro da Pasta raiz.',
+      'Backup automático diário às 08:00 adicionado no app, com geração de pasta própria por execução.',
+      'Regra diária global: apenas 1 backup por dia, independente de quem abrir o app.',
+      'Retenção automática: backups com mais de 15 dias são removidos para manter organização e espaço.',
+      'Novo botão "Executar backup agora" para disparo manual sob demanda.',
+      'Backups incluem configurações e bases críticas (Fiscal Compras, RH e arquivos fiscais disponíveis).'
+    ]
+  },
+  {
+    version: '1.6.2',
+    title: 'Menu - Atalhos de Teclado e Navegação Rápida',
+    date: '19/02/2026',
+    items: [
+      'Menu inicial: atalhos de teclado adicionados para acesso rápido às áreas principais.',
+      'Atalhos: tecla 1 (Listagem), 2 (PCP), 3 (Fiscal), 4 (RH), 5 (Configuração) e 6 (LOG).',
+      'Atalhos respeitam permissões do usuário e bloqueiam acesso quando a área estiver desabilitada.',
+      'Cards do Menu exibem indicador visual do atalho (badge numérico) para facilitar memorização e uso diário.',
+      'Navegação rápida habilitada apenas quando o painel Menu está ativo, evitando conflito com campos de digitação.'
+    ]
+  },
+  {
+    version: '1.6.1',
+    title: 'Menu Inicial Profissional (UX + Navegação)',
+    date: '19/02/2026',
+    items: [
+      'Nova aba "Menu" adicionada como tela inicial do app (em vez de abrir direto na Listagem).',
+      'Novo painel de navegação com cards para acessar: Listagem, PCP, Fiscal, RH, Configuração e LOG.',
+      'Pós-login ajustado para abrir automaticamente o Menu inicial.',
+      'Cards do Menu com validação de permissões por usuário (áreas sem acesso ficam desabilitadas).',
+      'Visual do Menu redesenhado com estilo corporativo: hero inicial, grid responsivo e hierarquia tipográfica mais didática.',
+      'Cards enriquecidos com ícones por área, subtítulo contextual e CTA "Abrir área", melhorando leitura e usabilidade.',
+      'Aba de navegação superior ajustada para suportar quebra de linha quando necessário, sem perder organização.'
+    ]
+  },
+  {
+    version: '1.6',
+    title: 'Fiscal Compras - UX, Status e PDF Corporativo',
+    date: '19/02/2026',
+    items: [
+      'Solicitacao de Compras: campo Observacoes no formulario movido para baixo do Total Geral Estimado, em largura total e sem redimensionamento manual.',
+      'Solicitacao de Compras: layout do formulario ajustado para remover componentes encavalados e melhorar leitura em desktop e mobile.',
+      'Solicitacao de Compras: status padronizados para PENDENTE (padrao ao gerar), APROVADA e CANCELADA.',
+      'Compatibilidade: status antigos (CRIADA, PEDIDO_GERADO, FINALIZADA) convertidos automaticamente para o novo padrao.',
+      'Solicitacao de Compras: correcao de calculo de subtotal/total para aceitar valores com virgula e ponto (ex: 13,05 e 13.05).',
+      'Cotacoes: destaque visual da melhor opcao reforcado na tela (mais visivel para comparacao rapida).',
+      'Consulta de Compras: filtros reorganizados em duas linhas com grid mais limpo para evitar encavalamento.',
+      'Consulta de Compras: coluna Acoes redesenhada com estrutura mais clara (status, observacao de aprovacao e botoes).',
+      'Aprovacao: observacao de aprovacao salva no banco (APROVACAO_OBS), visivel para todos e editavel apenas por usuario com permissao de aprovar compra.',
+      'Consulta de Compras: status com badge visual e observacao de aprovacao com truncamento + tooltip para leitura completa.',
+      'Fluxo: ao salvar ou salvar+PDF, a tela retorna automaticamente para a aba Consultar para confirmacao do usuario.',
+      'PDF da Solicitacao de Compras reformulado com visual corporativo: cabecalho vermelho escuro com texto branco, layout mais limpo, Observacoes abaixo do Total Geral Estimado e destaque em verde na celula do melhor fornecedor.'
+    ]
+  },
   {
     version: '1.5.15',
     title: 'Fiscal - Menu',
@@ -371,18 +449,26 @@ function ensureRhSolicHeApiAvailable() {
 
 const elements = {
   body: document.body,
+  tabMenu: document.getElementById('tab-menu'),
   tabMain: document.getElementById('tab-main'),
   tabPcp: document.getElementById('tab-pcp'),
   tabFiscal: document.getElementById('tab-fiscal'),
   tabRh: document.getElementById('tab-rh'),
   tabSettings: document.getElementById('tab-settings'),
   tabLog: document.getElementById('tab-log'),
+  panelMenu: document.getElementById('panel-menu'),
   panelMain: document.getElementById('panel-main'),
   panelPcp: document.getElementById('panel-pcp'),
   panelFiscal: document.getElementById('panel-fiscal'),
   panelRh: document.getElementById('panel-rh'),
   panelSettings: document.getElementById('panel-settings'),
   panelLog: document.getElementById('panel-log'),
+  menuOpenMain: document.getElementById('menu-open-main'),
+  menuOpenPcp: document.getElementById('menu-open-pcp'),
+  menuOpenFiscal: document.getElementById('menu-open-fiscal'),
+  menuOpenRh: document.getElementById('menu-open-rh'),
+  menuOpenSettings: document.getElementById('menu-open-settings'),
+  menuOpenLog: document.getElementById('menu-open-log'),
   brandLogo: document.getElementById('brand-logo'),
   themeSwitch: document.getElementById('theme-switch'),
   rootFolderInput: document.getElementById('root-folder-input'),
@@ -390,6 +476,8 @@ const elements = {
   fiscalRootInput: document.getElementById('fiscal-root-input'),
   btnSelectFiscalRoot: document.getElementById('btn-select-fiscal-root'),
   trackingApiKeyInput: document.getElementById('tracking-api-key-input'),
+  btnRunBackupNow: document.getElementById('btn-run-backup-now'),
+  btnRestoreBackup: document.getElementById('btn-restore-backup'),
   btnSaveSettings: document.getElementById('btn-save-settings'),
   btnUnlockLogins: document.getElementById('btn-unlock-logins'),
   loginsLockedNote: document.getElementById('logins-locked-note'),
@@ -415,6 +503,7 @@ const elements = {
   tableHead: document.querySelector('#result-table thead'),
   tableBody: document.querySelector('#result-table tbody'),
   logUpdatesContent: document.getElementById('log-updates-content'),
+  footerVersion: document.getElementById('footer-version'),
   toast: document.getElementById('toast'),
   pcpMenuView: document.getElementById('pcp-menu-view'),
   pcpAcompView: document.getElementById('pcp-acomp-view'),
@@ -478,7 +567,9 @@ const elements = {
   appLoginConfirm: document.getElementById('app-login-confirm'),
   fiscalMenuView: document.getElementById('fiscal-menu-view'),
   fiscalNfsView: document.getElementById('fiscal-nfs-view'),
+  fiscalComprasView: document.getElementById('fiscal-compras-view'),
   fiscalOpenNfs: document.getElementById('fiscal-open-nfs'),
+  fiscalOpenCompras: document.getElementById('fiscal-open-compras'),
   fiscalBackMenu: document.getElementById('fiscal-back-menu'),
   fiscalSubtitle: document.getElementById('fiscal-subtitle'),
   fiscalBtnCadastrarNf: document.getElementById('fiscal-btn-cadastrar-nf'),
@@ -536,6 +627,45 @@ const elements = {
   fiscalDeleteError: document.getElementById('fiscal-delete-error'),
   fiscalDeleteCancel: document.getElementById('fiscal-delete-cancel'),
   fiscalDeleteConfirm: document.getElementById('fiscal-delete-confirm'),
+  fiscalComprasBackMenu: document.getElementById('fiscal-compras-back-menu'),
+  fiscalComprasRefresh: document.getElementById('fiscal-compras-refresh'),
+  fiscalComprasNew: document.getElementById('fiscal-compras-new'),
+  fiscalComprasSubtitle: document.getElementById('fiscal-compras-subtitle'),
+  fiscalComprasTabForm: document.getElementById('fiscal-compras-tab-form'),
+  fiscalComprasTabConsulta: document.getElementById('fiscal-compras-tab-consulta'),
+  fiscalComprasViewForm: document.getElementById('fiscal-compras-view-form'),
+  fiscalComprasViewConsulta: document.getElementById('fiscal-compras-view-consulta'),
+  fiscalComprasId: document.getElementById('fiscal-compras-id'),
+  fiscalComprasNumero: document.getElementById('fiscal-compras-numero'),
+  fiscalComprasDataSolic: document.getElementById('fiscal-compras-data-solic'),
+  fiscalComprasSolicitadoPor: document.getElementById('fiscal-compras-solicitado-por'),
+  fiscalComprasSetor: document.getElementById('fiscal-compras-setor'),
+  fiscalComprasDestinado: document.getElementById('fiscal-compras-destinado'),
+  fiscalComprasStatus: document.getElementById('fiscal-compras-status'),
+  fiscalComprasObservacoes: document.getElementById('fiscal-compras-observacoes'),
+  fiscalComprasItemsWrap: document.getElementById('fiscal-compras-items-wrap'),
+  fiscalComprasFornecedorList: document.getElementById('fiscal-compras-fornecedor-list'),
+  fiscalComprasPagamentoList: document.getElementById('fiscal-compras-pagamento-list'),
+  fiscalComprasTotalEstimado: document.getElementById('fiscal-compras-total-estimado'),
+  fiscalComprasError: document.getElementById('fiscal-compras-error'),
+  fiscalComprasAddItem: document.getElementById('fiscal-compras-add-item'),
+  fiscalComprasCancel: document.getElementById('fiscal-compras-cancel'),
+  fiscalComprasSave: document.getElementById('fiscal-compras-save'),
+  fiscalComprasSavePdf: document.getElementById('fiscal-compras-save-pdf'),
+  fiscalComprasFilterIni: document.getElementById('fiscal-compras-filter-ini'),
+  fiscalComprasFilterFim: document.getElementById('fiscal-compras-filter-fim'),
+  fiscalComprasFilterSolicitante: document.getElementById('fiscal-compras-filter-solicitante'),
+  fiscalComprasFilterSetor: document.getElementById('fiscal-compras-filter-setor'),
+  fiscalComprasFilterNumero: document.getElementById('fiscal-compras-filter-numero'),
+  fiscalComprasFilterFornecedor: document.getElementById('fiscal-compras-filter-fornecedor'),
+  fiscalComprasFilterItem: document.getElementById('fiscal-compras-filter-item'),
+  fiscalComprasFilterStatus: document.getElementById('fiscal-compras-filter-status'),
+  fiscalComprasFilterClear: document.getElementById('fiscal-compras-filter-clear'),
+  fiscalComprasFilterApply: document.getElementById('fiscal-compras-filter-apply'),
+  fiscalComprasConsultaError: document.getElementById('fiscal-compras-consulta-error'),
+  fiscalComprasConsultaEmpty: document.getElementById('fiscal-compras-consulta-empty'),
+  fiscalComprasTableHead: document.getElementById('fiscal-compras-table-head'),
+  fiscalComprasTableBody: document.getElementById('fiscal-compras-table-body'),
   rhMenuView: document.getElementById('rh-menu-view'),
   rhOpenHe: document.getElementById('rh-open-he'),
   rhOpenSolicHe: document.getElementById('rh-open-solic-he'),
@@ -676,7 +806,16 @@ const elements = {
   adminSettingsPassword: document.getElementById('admin-settings-password'),
   adminSettingsError: document.getElementById('admin-settings-error'),
   adminSettingsCancel: document.getElementById('admin-settings-cancel'),
-  adminSettingsConfirm: document.getElementById('admin-settings-confirm')
+  adminSettingsConfirm: document.getElementById('admin-settings-confirm'),
+  backupRestoreModal: document.getElementById('backup-restore-modal'),
+  backupRestoreBackdrop: document.getElementById('backup-restore-backdrop'),
+  backupRestoreSelect: document.getElementById('backup-restore-select'),
+  backupRestorePass1: document.getElementById('backup-restore-pass1'),
+  backupRestorePass2: document.getElementById('backup-restore-pass2'),
+  backupRestorePass3: document.getElementById('backup-restore-pass3'),
+  backupRestoreError: document.getElementById('backup-restore-error'),
+  backupRestoreCancel: document.getElementById('backup-restore-cancel'),
+  backupRestoreConfirm: document.getElementById('backup-restore-confirm')
 };
 
 function getManagedAreas() {
@@ -698,6 +837,22 @@ function getPermissionValue(permissions, areaKey) {
     return !!permissions[areaKey];
   }
   return getAreaDefaultPermission(areaKey);
+}
+
+const FISCAL_COMPRAS_PERMISSION_DEFS = [
+  { key: 'compras_view', title: 'Pode Visualizar Solicitação de Compras', subtitle: 'Permite abrir, consultar e ver histórico de compras.' },
+  { key: 'compras_create', title: 'Pode Criar Solicitação', subtitle: 'Permite criar novas solicitações de compra.' },
+  { key: 'compras_edit', title: 'Pode Editar Solicitação', subtitle: 'Permite editar solicitações de compra existentes.' },
+  { key: 'compras_delete', title: 'Pode Excluir Solicitação', subtitle: 'Permite excluir solicitações de compra (com restrições de status).' },
+  { key: 'compras_pdf', title: 'Pode Gerar PDF', subtitle: 'Permite gerar e abrir PDF profissional da solicitação.' },
+  { key: 'compras_approve', title: 'Pode Aprovar Compra', subtitle: 'Permite aprovar solicitação e alterar status de aprovação.' }
+];
+
+function getPermissionValueWithFallback(permissions, key, fallbackValue = false) {
+  if (permissions && Object.prototype.hasOwnProperty.call(permissions, key)) {
+    return !!permissions[key];
+  }
+  return !!fallbackValue;
 }
 
 function collectUserModalPermissions() {
@@ -787,6 +942,42 @@ function renderUserPermissionsEditor(permissionsSeed = {}) {
     item.appendChild(textWrap);
     item.appendChild(label);
     elements.userPermissionsWrap.appendChild(item);
+  }
+
+  if (managedAreas.some((area) => area.key === 'fiscal')) {
+    FISCAL_COMPRAS_PERMISSION_DEFS.forEach((perm) => {
+      const item = document.createElement('div');
+      item.className = 'user-permission-item';
+
+      const textWrap = document.createElement('div');
+      textWrap.className = 'user-permission-text';
+      const strong = document.createElement('strong');
+      strong.textContent = `Fiscal - ${perm.title}`;
+      const subtitle = document.createElement('span');
+      subtitle.textContent = perm.subtitle;
+      textWrap.appendChild(strong);
+      textWrap.appendChild(subtitle);
+
+      const inputId = `user-can-${perm.key}`;
+      const label = document.createElement('label');
+      label.className = 'switch-control switch-sm';
+      label.setAttribute('for', inputId);
+
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = inputId;
+      input.setAttribute('data-user-permission-key', perm.key);
+      input.checked = getPermissionValueWithFallback(permissionsSeed, perm.key, !!permissionsSeed.fiscal);
+
+      const slider = document.createElement('span');
+      slider.className = 'switch-slider';
+
+      label.appendChild(input);
+      label.appendChild(slider);
+      item.appendChild(textWrap);
+      item.appendChild(label);
+      elements.userPermissionsWrap.appendChild(item);
+    });
   }
 }
 
@@ -1044,6 +1235,77 @@ function closeAdminSettingsModal() {
   }
 }
 
+function formatBackupDateLabel(value) {
+  const iso = String(value || '').trim();
+  if (!iso) {
+    return '';
+  }
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) {
+    return '';
+  }
+  return dt.toLocaleString('pt-BR');
+}
+
+function closeBackupRestoreModal() {
+  if (!elements.backupRestoreModal) {
+    return;
+  }
+  elements.backupRestoreModal.hidden = true;
+  if (elements.backupRestoreError) {
+    elements.backupRestoreError.textContent = '';
+  }
+  [elements.backupRestorePass1, elements.backupRestorePass2, elements.backupRestorePass3]
+    .filter(Boolean)
+    .forEach((el) => { el.value = ''; });
+}
+
+async function openBackupRestoreModal() {
+  if (!elements.backupRestoreModal || !elements.backupRestoreSelect) {
+    return;
+  }
+  elements.backupRestoreError.textContent = '';
+  elements.backupRestoreModal.hidden = false;
+  [elements.backupRestorePass1, elements.backupRestorePass2, elements.backupRestorePass3]
+    .filter(Boolean)
+    .forEach((el) => {
+      el.disabled = false;
+      el.readOnly = false;
+      el.value = '';
+    });
+  elements.backupRestoreSelect.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Carregando backups...';
+  elements.backupRestoreSelect.appendChild(placeholder);
+
+  try {
+    const result = await window.api.backupList();
+    const rows = Array.isArray(result?.rows) ? result.rows : [];
+    elements.backupRestoreSelect.innerHTML = '';
+    const first = document.createElement('option');
+    first.value = '';
+    first.textContent = rows.length ? 'Selecione um backup' : 'Nenhum backup disponível';
+    elements.backupRestoreSelect.appendChild(first);
+    rows.forEach((row) => {
+      const opt = document.createElement('option');
+      opt.value = String(row.folderName || '').trim();
+      const dateLabel = formatBackupDateLabel(row.createdAt);
+      const filesLabel = Number(row.copiedCount || 0);
+      opt.textContent = `${row.folderName}${dateLabel ? ` | ${dateLabel}` : ''} | ${filesLabel} arquivo(s)`;
+      elements.backupRestoreSelect.appendChild(opt);
+    });
+    if (rows.length) {
+      elements.backupRestoreSelect.value = String(rows[0].folderName || '').trim();
+    }
+    if (elements.backupRestorePass1) {
+      elements.backupRestorePass1.focus();
+    }
+  } catch (error) {
+    elements.backupRestoreError.textContent = error.message || 'Erro ao listar backups.';
+  }
+}
+
 function setLoginsSectionVisible(visible) {
   const show = !!visible;
   state.isLoginsSectionUnlocked = show;
@@ -1078,6 +1340,11 @@ function setUsersHeaders() {
     dynamicCols.push(area.label);
     if (area.key === 'rh') {
       dynamicCols.push('RH Editar');
+    }
+    if (area.key === 'fiscal') {
+      FISCAL_COMPRAS_PERMISSION_DEFS.forEach((perm) => {
+        dynamicCols.push(perm.title.replace('Pode ', ''));
+      });
     }
   });
   setTableHeaders(elements.usersTableHead, ['Usuário', ...dynamicCols, 'Ações']);
@@ -1190,6 +1457,14 @@ function renderUsersTable() {
             if (permKey === 'rh' && !nextValue) {
               nextPermissions.rh_edit = false;
             }
+            if (permKey === 'fiscal' && !nextValue) {
+              FISCAL_COMPRAS_PERMISSION_DEFS.forEach((perm) => {
+                nextPermissions[perm.key] = false;
+              });
+            }
+            if (permKey.startsWith('compras_') && nextValue) {
+              nextPermissions.fiscal = true;
+            }
 
             await window.api.updateUser({
               username: user.username,
@@ -1219,6 +1494,14 @@ function renderUsersTable() {
       tr.appendChild(renderPermissionToggleCell(area.key, getPermissionValue(user.permissions || {}, area.key)));
       if (area.key === 'rh') {
         tr.appendChild(renderPermissionToggleCell('rh_edit', getPermissionValue(user.permissions || {}, 'rh_edit')));
+      }
+      if (area.key === 'fiscal') {
+        FISCAL_COMPRAS_PERMISSION_DEFS.forEach((perm) => {
+          tr.appendChild(renderPermissionToggleCell(
+            perm.key,
+            getPermissionValueWithFallback(user.permissions || {}, perm.key, getPermissionValue(user.permissions || {}, 'fiscal'))
+          ));
+        });
       }
     });
 
@@ -1250,6 +1533,7 @@ function renderUsersTable() {
 
 function switchTab(next) {
   const tabMap = {
+    menu: { tab: elements.tabMenu, panel: elements.panelMenu },
     main: { tab: elements.tabMain, panel: elements.panelMain },
     pcp: { tab: elements.tabPcp, panel: elements.panelPcp },
     fiscal: { tab: elements.tabFiscal, panel: elements.panelFiscal },
@@ -1293,6 +1577,23 @@ function applyPermissionsToTabs() {
     const allowed = canAccessArea(area.key);
     tabEl.disabled = !allowed;
     tabEl.title = allowed ? '' : `Usuário sem permissão para ${area.label}.`;
+  });
+
+  const menuMap = [
+    { el: elements.menuOpenMain, key: 'main', label: 'Listagem' },
+    { el: elements.menuOpenPcp, key: 'pcp', label: 'PCP' },
+    { el: elements.menuOpenFiscal, key: 'fiscal', label: 'Fiscal' },
+    { el: elements.menuOpenRh, key: 'rh', label: 'RH' },
+    { el: elements.menuOpenSettings, key: 'settings', label: 'Configuração' },
+    { el: elements.menuOpenLog, key: 'log', label: 'LOG' }
+  ];
+  menuMap.forEach(({ el, key, label }) => {
+    if (!el) {
+      return;
+    }
+    const allowed = canAccessArea(key);
+    el.disabled = !allowed;
+    el.title = allowed ? '' : `Usuário sem permissão para ${label}.`;
   });
 }
 
@@ -1841,13 +2142,17 @@ function renderFiscalScreen() {
   }
 
   const isMenu = state.fiscalView === 'menu';
+  const isCompras = state.fiscalView === 'compras';
   if (elements.fiscalMenuView) {
     elements.fiscalMenuView.hidden = !isMenu;
   }
   if (elements.fiscalNfsView) {
-    elements.fiscalNfsView.hidden = isMenu;
+    elements.fiscalNfsView.hidden = isMenu || isCompras;
   }
-  if (isMenu) {
+  if (elements.fiscalComprasView) {
+    elements.fiscalComprasView.hidden = !isCompras;
+  }
+  if (isMenu || isCompras) {
     return;
   }
 
@@ -4222,7 +4527,7 @@ async function handleAppLoginConfirm() {
   }
 
   closeAppLoginModal();
-  switchTab('main');
+  switchTab('menu');
   showToast(`Bem-vindo, ${result.username}.`);
 }
 
@@ -4256,7 +4561,597 @@ async function requestFiscalAccess() {
   state.fiscalSelectionNf = null;
   state.fiscalNfItems = [];
   state.fiscalView = 'menu';
+  if (elements.fiscalOpenCompras) {
+    elements.fiscalOpenCompras.hidden = !canFiscalComprasView();
+  }
   renderFiscalScreen();
+}
+
+function getFiscalComprasPermissionValue(key) {
+  const perms = getAuthPermissions();
+  const hasKey = perms && Object.prototype.hasOwnProperty.call(perms, key);
+  const hasFiscal = !!getPermissionValue(perms, 'fiscal');
+  if (hasKey) {
+    return !!perms[key];
+  }
+  return hasFiscal;
+}
+
+function canFiscalComprasView() {
+  return canAccessFiscal() && getFiscalComprasPermissionValue('compras_view');
+}
+
+function canFiscalComprasCreate() {
+  return canAccessFiscal() && getFiscalComprasPermissionValue('compras_create');
+}
+
+function canFiscalComprasEdit() {
+  return canAccessFiscal() && getFiscalComprasPermissionValue('compras_edit');
+}
+
+function canFiscalComprasDelete() {
+  return canAccessFiscal() && getFiscalComprasPermissionValue('compras_delete');
+}
+
+function canFiscalComprasPdf() {
+  return canAccessFiscal() && getFiscalComprasPermissionValue('compras_pdf');
+}
+
+function canFiscalComprasApprove() {
+  return canAccessFiscal() && getFiscalComprasPermissionValue('compras_approve');
+}
+
+function parseMoneyLike(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+  const cleaned = raw.replace(/[^\d,.\-]/g, '');
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  const decimalSep = lastComma > lastDot ? ',' : '.';
+  let normalized = cleaned;
+  if (lastComma >= 0 || lastDot >= 0) {
+    const thousandsSep = decimalSep === ',' ? '.' : ',';
+    normalized = normalized.split(thousandsSep).join('');
+    if (decimalSep === ',') {
+      normalized = normalized.replace(',', '.');
+    }
+  }
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function formatStatusCompraLabel(value) {
+  const key = String(value || '').trim().toUpperCase();
+  if (key === 'PENDENTE') return 'Pendente';
+  if (key === 'APROVADA') return 'Aprovada';
+  if (key === 'CANCELADA') return 'Cancelada';
+  return key || '-';
+}
+
+function createFiscalCompraItemSeed() {
+  return {
+    quantidade: '',
+    unidade: '',
+    descricao: '',
+    fornecedor_escolhido: '',
+    cotacoes: [
+      { fornecedor_nome: '', tipo_pagamento: '', valor_unitario: '', prazo_entrega: '' },
+      { fornecedor_nome: '', tipo_pagamento: '', valor_unitario: '', prazo_entrega: '' },
+      { fornecedor_nome: '', tipo_pagamento: '', valor_unitario: '', prazo_entrega: '' }
+    ]
+  };
+}
+
+function setFiscalComprasTab(tab) {
+  state.fiscalComprasTab = tab === 'consulta' ? 'consulta' : 'form';
+  if (elements.fiscalComprasViewForm) {
+    elements.fiscalComprasViewForm.hidden = state.fiscalComprasTab !== 'form';
+  }
+  if (elements.fiscalComprasViewConsulta) {
+    elements.fiscalComprasViewConsulta.hidden = state.fiscalComprasTab !== 'consulta';
+  }
+  elements.fiscalComprasTabForm?.classList.toggle('active', state.fiscalComprasTab === 'form');
+  elements.fiscalComprasTabConsulta?.classList.toggle('active', state.fiscalComprasTab === 'consulta');
+}
+
+function getFornecedorPagamentoPadrao(nome) {
+  const safe = normalizeForFilter(nome);
+  const found = (state.fiscalComprasFornecedores || []).find((f) => normalizeForFilter(f.nome) === safe);
+  return found ? String(found.tipo_pagamento_padrao || '').trim() : '';
+}
+
+function renderFiscalComprasDatalists() {
+  if (elements.fiscalComprasFornecedorList) {
+    elements.fiscalComprasFornecedorList.innerHTML = '';
+    (state.fiscalComprasFornecedores || []).forEach((f) => {
+      const option = document.createElement('option');
+      option.value = String(f.nome || '').trim();
+      elements.fiscalComprasFornecedorList.appendChild(option);
+    });
+  }
+  if (elements.fiscalComprasPagamentoList) {
+    const unique = new Set();
+    elements.fiscalComprasPagamentoList.innerHTML = '';
+    (state.fiscalComprasFornecedores || []).forEach((f) => {
+      const value = String(f.tipo_pagamento_padrao || '').trim();
+      if (!value || unique.has(normalizeForFilter(value))) {
+        return;
+      }
+      unique.add(normalizeForFilter(value));
+      const option = document.createElement('option');
+      option.value = value;
+      elements.fiscalComprasPagamentoList.appendChild(option);
+    });
+  }
+}
+
+function recalcFiscalComprasItemCard(card) {
+  const qtyInput = card.querySelector('[data-item-qty]');
+  const qty = parseMoneyLike(qtyInput ? qtyInput.value : 0);
+  const quoteRows = Array.from(card.querySelectorAll('[data-cot-row]'));
+  let minUnit = Number.POSITIVE_INFINITY;
+  quoteRows.forEach((row) => {
+    const unitInput = row.querySelector('[data-cot-unit]');
+    const subtotalEl = row.querySelector('[data-cot-subtotal]');
+    const unit = parseMoneyLike(unitInput ? unitInput.value : 0);
+    const subtotal = qty > 0 && unit > 0 ? qty * unit : 0;
+    if (subtotalEl) {
+      subtotalEl.textContent = subtotal > 0 ? formatCurrencyBr(subtotal) : '-';
+    }
+    row.classList.remove('best-price');
+    if (unit > 0) {
+      minUnit = Math.min(minUnit, unit);
+    }
+  });
+  if (Number.isFinite(minUnit)) {
+    quoteRows.forEach((row) => {
+      const unitInput = row.querySelector('[data-cot-unit]');
+      const unit = parseMoneyLike(unitInput ? unitInput.value : 0);
+      if (unit > 0 && Math.abs(unit - minUnit) < 0.000001) {
+        row.classList.add('best-price');
+      }
+    });
+  }
+}
+
+function recalcFiscalComprasTotalForm() {
+  const items = readFiscalComprasItemsFromForm();
+  const total = items.reduce((sum, item) => {
+    const escolha = String(item.fornecedor_escolhido || '').trim();
+    const chosen = item.cotacoes.find((c) => String(c.fornecedor_nome || '').trim() === escolha) || item.cotacoes[0];
+    return sum + Number(chosen && chosen.subtotal ? chosen.subtotal : 0);
+  }, 0);
+  if (elements.fiscalComprasTotalEstimado) {
+    elements.fiscalComprasTotalEstimado.value = formatCurrencyBr(total);
+  }
+}
+
+function renderFiscalComprasItems(itemsSeed) {
+  if (!elements.fiscalComprasItemsWrap) {
+    return;
+  }
+  const items = Array.isArray(itemsSeed) && itemsSeed.length ? itemsSeed : [createFiscalCompraItemSeed()];
+  elements.fiscalComprasItemsWrap.innerHTML = '';
+
+  items.forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'fiscal-compra-item-card';
+    card.setAttribute('data-item-card', String(index));
+
+    const head = document.createElement('div');
+    head.className = 'inline';
+    head.style.justifyContent = 'space-between';
+    head.style.alignItems = 'center';
+    const title = document.createElement('h4');
+    title.className = 'fiscal-compra-item-title';
+    title.textContent = `Item ${index + 1}`;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn secondary';
+    removeBtn.textContent = 'Remover';
+    removeBtn.disabled = items.length <= 1;
+    removeBtn.addEventListener('click', () => {
+      const next = readFiscalComprasItemsFromForm();
+      next.splice(index, 1);
+      renderFiscalComprasItems(next);
+      recalcFiscalComprasTotalForm();
+    });
+    head.appendChild(title);
+    head.appendChild(removeBtn);
+    card.appendChild(head);
+
+    const core = document.createElement('div');
+    core.className = 'inline';
+    core.innerHTML = `
+      <div class="field" style="flex:1;">
+        <label>Quantidade</label>
+        <input type="number" min="0" step="0.001" data-item-qty value="${String(item.quantidade || '')}" />
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Unidade</label>
+        <input type="text" data-item-unidade value="${String(item.unidade || '')}" />
+      </div>
+      <div class="field" style="flex:3;">
+        <label>Descrição</label>
+        <input type="text" data-item-descricao value="${String(item.descricao || '')}" />
+      </div>
+    `;
+    card.appendChild(core);
+
+    const cotGrid = document.createElement('div');
+    cotGrid.className = 'fiscal-compra-cotacao-grid';
+    const cotacoes = Array.isArray(item.cotacoes) ? item.cotacoes.slice(0, 3) : [];
+    while (cotacoes.length < 3) {
+      cotacoes.push({ fornecedor_nome: '', tipo_pagamento: '', valor_unitario: '', prazo_entrega: '' });
+    }
+    cotacoes.forEach((cot, cotIndex) => {
+      const row = document.createElement('div');
+      row.className = 'fiscal-compra-cotacao-row';
+      row.setAttribute('data-cot-row', String(cotIndex));
+      row.innerHTML = `
+        <div class="field">
+          <label>Fornecedor ${cotIndex + 1}</label>
+          <input type="text" list="fiscal-compras-fornecedor-list" data-cot-fornecedor value="${String(cot.fornecedor_nome || '')}" />
+        </div>
+        <div class="field">
+          <label>Pagamento</label>
+          <input type="text" list="fiscal-compras-pagamento-list" data-cot-pagamento value="${String(cot.tipo_pagamento || '')}" />
+        </div>
+        <div class="field">
+          <label>Valor unit.</label>
+          <input type="number" min="0" step="0.01" data-cot-unit value="${String(cot.valor_unitario || '')}" />
+        </div>
+        <div class="field">
+          <label>Prazo</label>
+          <input type="text" data-cot-prazo value="${String(cot.prazo_entrega || '')}" />
+        </div>
+        <div class="field">
+          <label>Subtotal</label>
+          <div class="fiscal-cot-subtotal-value" data-cot-subtotal>-</div>
+        </div>
+        <div class="field fiscal-cot-choose-field">
+          <label>Escolha</label>
+          <input class="fiscal-cot-choose-input" type="radio" name="item-escolha-${index}" data-cot-escolha value="${cotIndex}" ${String(item.fornecedor_escolhido || '') === String(cot.fornecedor_nome || '') ? 'checked' : ''} />
+        </div>
+      `;
+      cotGrid.appendChild(row);
+    });
+    card.appendChild(cotGrid);
+
+    card.querySelectorAll('input').forEach((input) => {
+      input.addEventListener('input', () => {
+        if (input.hasAttribute('data-cot-fornecedor')) {
+          const fornecedor = String(input.value || '').trim();
+          const pagamentoInput = input.closest('[data-cot-row]')?.querySelector('[data-cot-pagamento]');
+          if (pagamentoInput && !String(pagamentoInput.value || '').trim()) {
+            pagamentoInput.value = getFornecedorPagamentoPadrao(fornecedor);
+          }
+        }
+        recalcFiscalComprasItemCard(card);
+        recalcFiscalComprasTotalForm();
+      });
+      input.addEventListener('change', () => {
+        recalcFiscalComprasItemCard(card);
+        recalcFiscalComprasTotalForm();
+      });
+    });
+
+    const radios = Array.from(card.querySelectorAll('[data-cot-escolha]'));
+    if (!radios.some((r) => r.checked) && radios.length) {
+      radios[0].checked = true;
+    }
+
+    recalcFiscalComprasItemCard(card);
+    elements.fiscalComprasItemsWrap.appendChild(card);
+  });
+}
+
+function readFiscalComprasItemsFromForm() {
+  const cards = Array.from(elements.fiscalComprasItemsWrap?.querySelectorAll('[data-item-card]') || []);
+  return cards.map((card) => {
+    const quantidade = parseMoneyLike(card.querySelector('[data-item-qty]')?.value);
+    const unidade = String(card.querySelector('[data-item-unidade]')?.value || '').trim();
+    const descricao = String(card.querySelector('[data-item-descricao]')?.value || '').trim();
+    const cotRows = Array.from(card.querySelectorAll('[data-cot-row]'));
+    const cotacoes = cotRows.map((row) => {
+      const fornecedor_nome = String(row.querySelector('[data-cot-fornecedor]')?.value || '').trim();
+      const tipo_pagamento = String(row.querySelector('[data-cot-pagamento]')?.value || '').trim();
+      const valor_unitario = parseMoneyLike(row.querySelector('[data-cot-unit]')?.value);
+      const prazo_entrega = String(row.querySelector('[data-cot-prazo]')?.value || '').trim();
+      return {
+        fornecedor_nome,
+        tipo_pagamento,
+        valor_unitario,
+        prazo_entrega,
+        subtotal: valor_unitario > 0 && quantidade > 0 ? quantidade * valor_unitario : 0
+      };
+    });
+    const selectedIdx = cotRows.findIndex((row) => !!row.querySelector('[data-cot-escolha]')?.checked);
+    const selected = selectedIdx >= 0 ? cotacoes[selectedIdx] : cotacoes[0];
+    return {
+      quantidade,
+      unidade,
+      descricao,
+      fornecedor_escolhido: selected ? selected.fornecedor_nome : '',
+      cotacoes: cotacoes.filter((c) => c.fornecedor_nome || c.tipo_pagamento || c.valor_unitario > 0 || c.prazo_entrega)
+    };
+  });
+}
+
+function resetFiscalComprasForm() {
+  if (elements.fiscalComprasError) {
+    elements.fiscalComprasError.textContent = '';
+  }
+  if (elements.fiscalComprasId) elements.fiscalComprasId.value = '';
+  if (elements.fiscalComprasNumero) elements.fiscalComprasNumero.value = '';
+  if (elements.fiscalComprasDataSolic) elements.fiscalComprasDataSolic.value = getTodayYmdLocal();
+  if (elements.fiscalComprasSolicitadoPor) elements.fiscalComprasSolicitadoPor.value = getAuthUsername();
+  if (elements.fiscalComprasSetor) elements.fiscalComprasSetor.value = '';
+  if (elements.fiscalComprasDestinado) elements.fiscalComprasDestinado.value = '';
+  if (elements.fiscalComprasStatus) elements.fiscalComprasStatus.value = 'PENDENTE';
+  if (elements.fiscalComprasObservacoes) elements.fiscalComprasObservacoes.value = '';
+  renderFiscalComprasItems([createFiscalCompraItemSeed()]);
+  recalcFiscalComprasTotalForm();
+}
+
+function fillFiscalComprasForm(row) {
+  if (!row || typeof row !== 'object') {
+    resetFiscalComprasForm();
+    return;
+  }
+  if (elements.fiscalComprasError) elements.fiscalComprasError.textContent = '';
+  if (elements.fiscalComprasId) elements.fiscalComprasId.value = String(row.id || '').trim();
+  if (elements.fiscalComprasNumero) elements.fiscalComprasNumero.value = String(row.numero_requisicao || '').trim();
+  if (elements.fiscalComprasDataSolic) elements.fiscalComprasDataSolic.value = String(row.data_solicitacao || '').trim();
+  if (elements.fiscalComprasSolicitadoPor) elements.fiscalComprasSolicitadoPor.value = String(row.solicitado_por || '').trim();
+  if (elements.fiscalComprasSetor) elements.fiscalComprasSetor.value = String(row.setor || '').trim();
+  if (elements.fiscalComprasDestinado) elements.fiscalComprasDestinado.value = String(row.destinado_a || '').trim();
+  if (elements.fiscalComprasStatus) elements.fiscalComprasStatus.value = String(row.status || 'PENDENTE').trim();
+  if (elements.fiscalComprasObservacoes) elements.fiscalComprasObservacoes.value = String(row.observacoes || '').trim();
+  renderFiscalComprasItems(Array.isArray(row.itens) && row.itens.length ? row.itens : [createFiscalCompraItemSeed()]);
+  recalcFiscalComprasTotalForm();
+}
+
+async function loadFiscalComprasContext() {
+  const username = getAuthUsername();
+  const [ctxResult, fornResult] = await Promise.all([
+    window.api.fiscalComprasContext({ username }),
+    window.api.fiscalComprasFornecedoresList({ username })
+  ]);
+  state.fiscalComprasCan = (ctxResult && ctxResult.permissions) || {};
+  state.fiscalComprasFornecedores = (fornResult && fornResult.rows) || [];
+  renderFiscalComprasDatalists();
+}
+
+function applyFiscalComprasPermissionsUi() {
+  if (elements.fiscalComprasNew) {
+    elements.fiscalComprasNew.hidden = !canFiscalComprasCreate();
+  }
+  if (elements.fiscalComprasAddItem) {
+    elements.fiscalComprasAddItem.disabled = !canFiscalComprasCreate() && !canFiscalComprasEdit();
+  }
+  if (elements.fiscalComprasSave) {
+    elements.fiscalComprasSave.disabled = !canFiscalComprasCreate() && !canFiscalComprasEdit();
+  }
+  if (elements.fiscalComprasSavePdf) {
+    elements.fiscalComprasSavePdf.disabled = (!canFiscalComprasCreate() && !canFiscalComprasEdit()) || !canFiscalComprasPdf();
+  }
+}
+
+function renderFiscalComprasTable() {
+  if (!elements.fiscalComprasTableHead || !elements.fiscalComprasTableBody) {
+    return;
+  }
+  setTableHeaders(elements.fiscalComprasTableHead, ['Nº Req.', 'Data', 'Solicitante', 'Setor', 'Status', 'Total', 'Ações']);
+  elements.fiscalComprasTableBody.innerHTML = '';
+  const rows = Array.isArray(state.fiscalComprasRows) ? state.fiscalComprasRows : [];
+  if (elements.fiscalComprasConsultaEmpty) {
+    elements.fiscalComprasConsultaEmpty.hidden = rows.length > 0;
+  }
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    const values = [
+      String(row.numero_requisicao || '').trim(),
+      formatYmdToBr(String(row.data_solicitacao || '').trim()),
+      String(row.solicitado_por || '').trim(),
+      String(row.setor || '').trim(),
+      formatStatusCompraLabel(row.status),
+      formatCurrencyBr(Number(row.total_geral_estimado || 0))
+    ];
+    values.forEach((value, idx) => {
+      const td = document.createElement('td');
+      if (idx === 4) {
+        const statusText = String(value || '').trim();
+        const statusBadge = document.createElement('span');
+        statusBadge.className = `fiscal-compras-status-badge status-${String(row.status || '').trim().toLowerCase()}`;
+        statusBadge.textContent = statusText || '-';
+        td.appendChild(statusBadge);
+        if (String(row.status || '').trim().toUpperCase() === 'APROVADA' && String(row.aprovacao_obs || '').trim()) {
+          const obsBadge = document.createElement('span');
+          obsBadge.className = 'fiscal-compras-aprov-obs';
+          const fullObs = String(row.aprovacao_obs || '').trim();
+          obsBadge.textContent = fullObs;
+          obsBadge.title = fullObs;
+          td.appendChild(obsBadge);
+        }
+      } else {
+        td.textContent = value;
+      }
+      tr.appendChild(td);
+    });
+
+    const actionsTd = document.createElement('td');
+    actionsTd.className = 'fiscal-compras-actions-cell';
+    const actionsWrap = document.createElement('div');
+    actionsWrap.className = 'fiscal-compras-actions-wrap';
+
+    const topRow = document.createElement('div');
+    topRow.className = 'fiscal-compras-actions-top';
+    const canApproveObs = canFiscalComprasApprove();
+    const canChangeStatus = canFiscalComprasEdit() || canFiscalComprasApprove();
+    const statusSel = document.createElement('select');
+    statusSel.className = 'fiscal-compras-actions-status';
+    const originalStatus = String(row.status || '').trim();
+    ['PENDENTE', 'APROVADA', 'CANCELADA'].forEach((status) => {
+      const opt = document.createElement('option');
+      opt.value = status;
+      opt.textContent = formatStatusCompraLabel(status);
+      if (String(row.status || '').trim() === status) {
+        opt.selected = true;
+      }
+      statusSel.appendChild(opt);
+    });
+    statusSel.disabled = !canChangeStatus;
+    topRow.appendChild(statusSel);
+
+    const updateBtn = document.createElement('button');
+    updateBtn.type = 'button';
+    updateBtn.className = 'btn secondary fiscal-compras-actions-update';
+    updateBtn.textContent = 'Atualizar';
+    updateBtn.disabled = !canChangeStatus;
+    updateBtn.addEventListener('click', async () => {
+      const prevObs = String((obsInput && obsInput.value) || String(row.aprovacao_obs || '').trim());
+      try {
+        const payload = {
+          username: getAuthUsername(),
+          id: row.id,
+          status: statusSel.value
+        };
+        if (canApproveObs) {
+          payload.aprovacao_obs = String(obsInput.value || '').trim();
+        }
+        await window.api.fiscalComprasUpdateStatus(payload);
+        await loadFiscalComprasRows();
+        showToast('Status atualizado.');
+      } catch (error) {
+        statusSel.value = originalStatus;
+        if (canApproveObs) {
+          obsInput.value = prevObs;
+        }
+        showToast(error.message || 'Erro ao atualizar status.', true);
+      }
+    });
+    topRow.appendChild(updateBtn);
+    actionsWrap.appendChild(topRow);
+
+    const obsRow = document.createElement('div');
+    obsRow.className = 'fiscal-compras-actions-obs-row';
+    const obsLabel = document.createElement('span');
+    obsLabel.className = 'fiscal-compras-actions-obs-label';
+    obsLabel.textContent = 'Obs aprovação';
+    obsRow.appendChild(obsLabel);
+    const obsInput = document.createElement('input');
+    obsInput.type = 'text';
+    obsInput.className = 'fiscal-compras-actions-obs';
+    obsInput.placeholder = canApproveObs ? 'Ex: chega 25/02' : 'Sem observação';
+    obsInput.value = String(row.aprovacao_obs || '').trim();
+    obsInput.title = String(row.aprovacao_obs || '').trim();
+    if (!canApproveObs) {
+      obsInput.readOnly = true;
+      obsInput.classList.add('readonly');
+    }
+    obsRow.appendChild(obsInput);
+    actionsWrap.appendChild(obsRow);
+
+    const obsHint = document.createElement('p');
+    obsHint.className = 'fiscal-compras-actions-hint';
+    obsHint.textContent = canApproveObs
+      ? 'Somente aprovador edita a observação.'
+      : 'Somente aprovador pode editar a observação.';
+    actionsWrap.appendChild(obsHint);
+
+    const linksRow = document.createElement('div');
+    linksRow.className = 'fiscal-compras-actions-links';
+
+    const editBtn = createPcpActionButton('Editar', () => {
+      fillFiscalComprasForm(row);
+      setFiscalComprasTab('form');
+    });
+    editBtn.classList.add('fiscal-compras-link-action');
+    editBtn.disabled = !canFiscalComprasEdit();
+    linksRow.appendChild(editBtn);
+
+    const pdfBtn = createPcpActionButton('PDF', async () => {
+      try {
+        await window.api.fiscalComprasPdfRegen({ username: getAuthUsername(), id: row.id });
+        showToast('PDF gerado.');
+      } catch (error) {
+        showToast(error.message || 'Erro ao gerar PDF.', true);
+      }
+    });
+    pdfBtn.classList.add('fiscal-compras-link-action');
+    pdfBtn.disabled = !canFiscalComprasPdf();
+    linksRow.appendChild(pdfBtn);
+
+    const openBtn = createPcpActionButton('Abrir PDF', async () => {
+      try {
+        await window.api.fiscalComprasPdfOpen({ username: getAuthUsername(), id: row.id });
+      } catch (error) {
+        showToast(error.message || 'Erro ao abrir PDF.', true);
+      }
+    });
+    openBtn.classList.add('fiscal-compras-link-action');
+    openBtn.disabled = !canFiscalComprasPdf();
+    linksRow.appendChild(openBtn);
+
+    const histBtn = createPcpActionButton('Histórico', () => {
+      const entries = Array.isArray(row.historico_itens) ? row.historico_itens : [];
+      if (!entries.length) {
+        showToast('Sem histórico de compra para os itens desta solicitação.');
+        return;
+      }
+      const text = entries.map((h) => (
+        `${h.descricao}: ${h.ultimo_fornecedor || '-'} / ${h.ultimo_valor_pago ? formatCurrencyBr(h.ultimo_valor_pago) : '-'} / ${formatYmdToBr(h.data_ultima_compra || '')}`
+      )).join('\n');
+      window.alert(text);
+    });
+    histBtn.classList.add('fiscal-compras-link-action');
+    linksRow.appendChild(histBtn);
+
+    const delBtn = createPcpActionButton('Excluir', async () => {
+      const ok = window.confirm('Excluir esta solicitação de compra?');
+      if (!ok) return;
+      try {
+        await window.api.fiscalComprasDelete({ username: getAuthUsername(), id: row.id });
+        await loadFiscalComprasRows();
+        showToast('Solicitação excluída.');
+      } catch (error) {
+        showToast(error.message || 'Erro ao excluir solicitação.', true);
+      }
+    });
+    delBtn.classList.add('fiscal-compras-link-action');
+    delBtn.disabled = !canFiscalComprasDelete();
+    linksRow.appendChild(delBtn);
+
+    actionsWrap.appendChild(linksRow);
+    actionsTd.appendChild(actionsWrap);
+
+    tr.appendChild(actionsTd);
+    elements.fiscalComprasTableBody.appendChild(tr);
+  });
+}
+
+async function loadFiscalComprasRows() {
+  const result = await window.api.fiscalComprasList({
+    username: getAuthUsername(),
+    filters: state.fiscalComprasFilters || {}
+  });
+  state.fiscalComprasRows = (result && result.rows) || [];
+  renderFiscalComprasTable();
+}
+
+async function openFiscalComprasView() {
+  if (!canFiscalComprasView()) {
+    showToast('Usuário sem permissão para visualizar Solicitação de Compras.', true);
+    return;
+  }
+  state.fiscalView = 'compras';
+  renderFiscalScreen();
+  await loadFiscalComprasContext();
+  applyFiscalComprasPermissionsUi();
+  await loadFiscalComprasRows();
+  resetFiscalComprasForm();
+  setFiscalComprasTab('consulta');
 }
 
 function canEditRh() {
@@ -5436,21 +6331,16 @@ async function renderRhAudit() {
 }
 
 function getVersionParts(version) {
-  const match = String(version).match(/(\d+)\.(\d+)\.(\d+)/);
+  const match = String(version).trim().match(/^(\d+)\.(\d+)(?:\.(\d+))?$/);
   if (!match) {
     return [0, 0, 0];
   }
 
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  return [Number(match[1]), Number(match[2]), Number(match[3] || 0)];
 }
 
-function renderLogUpdates() {
-  if (!elements.logUpdatesContent) {
-    return;
-  }
-
-  elements.logUpdatesContent.innerHTML = '';
-  const sortedGroups = [...FEATURE_LOG_GROUPS].sort((a, b) => {
+function getSortedFeatureLogGroups() {
+  return [...FEATURE_LOG_GROUPS].sort((a, b) => {
     const [aMajor, aMinor, aPatch] = getVersionParts(a.version);
     const [bMajor, bMinor, bPatch] = getVersionParts(b.version);
 
@@ -5462,6 +6352,28 @@ function renderLogUpdates() {
     }
     return bPatch - aPatch;
   });
+}
+
+function updateFooterVersion() {
+  if (!elements.footerVersion) {
+    return;
+  }
+  const latest = getSortedFeatureLogGroups()[0] || null;
+  if (!latest) {
+    elements.footerVersion.textContent = 'Versão: - | Atualizado em: -';
+    return;
+  }
+  const dateLabel = String(latest.date || '').trim() || '-';
+  elements.footerVersion.textContent = `Versão: ${latest.version} | Atualizado em: ${dateLabel}`;
+}
+
+function renderLogUpdates() {
+  if (!elements.logUpdatesContent) {
+    return;
+  }
+
+  elements.logUpdatesContent.innerHTML = '';
+  const sortedGroups = getSortedFeatureLogGroups();
 
   sortedGroups.forEach((group) => {
     const card = document.createElement('article');
@@ -6048,6 +6960,7 @@ async function init() {
     updateDynamicControlsVisibility();
     renderKpis(null);
     renderLogUpdates();
+    updateFooterVersion();
     setPcpView('menu');
     setLoginsSectionVisible(false);
     if (elements.pcpEffDate) {
@@ -6466,8 +7379,175 @@ function handleToggleDynamicEfficiency() {
   renderKpis(state.loadedKpis);
 }
 
+function openAreaFromMenu(area) {
+  if (area === 'main') {
+    switchTab('main');
+    return;
+  }
+  if (area === 'pcp') {
+    requestPcpAccess();
+    return;
+  }
+  if (area === 'fiscal') {
+    void requestFiscalAccess();
+    return;
+  }
+  if (area === 'rh') {
+    requestRhAccess();
+    return;
+  }
+  if (area === 'settings') {
+    if (!canAccessArea('settings')) {
+      showToast('Usuário sem permissão para acessar Configuração.', true);
+      return;
+    }
+    switchTab('settings');
+    return;
+  }
+  if (area === 'log') {
+    if (!canAccessArea('log')) {
+      showToast('Usuário sem permissão para acessar LOG.', true);
+      return;
+    }
+    switchTab('log');
+  }
+}
+
+async function handleRunBackupNow() {
+  const btn = elements.btnRunBackupNow || null;
+  const label = btn ? btn.querySelector('.backup-now-label') : null;
+  if (btn && btn.disabled) {
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+  }
+  if (label) {
+    label.textContent = 'Executando...';
+  }
+
+  try {
+    const result = await window.api.runBackupNow();
+    const folderPath = String(result?.folderPath || '').trim();
+    if (folderPath) {
+      showToast(`Backup concluído: ${folderPath}`);
+      return;
+    }
+    showToast('Backup concluído.');
+  } catch (error) {
+    showToast(`Erro ao executar backup: ${error.message}`, true);
+  } finally {
+    if (label) {
+      label.textContent = 'Executar backup agora';
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('is-loading');
+    }
+  }
+}
+
+async function handleRestoreBackupConfirm() {
+  const backupFolderName = String(elements.backupRestoreSelect?.value || '').trim();
+  if (!backupFolderName) {
+    if (elements.backupRestoreError) {
+      elements.backupRestoreError.textContent = 'Selecione um backup para restaurar.';
+    }
+    return;
+  }
+  const pass1 = String(elements.backupRestorePass1?.value || '').trim();
+  const pass2 = String(elements.backupRestorePass2?.value || '').trim();
+  const pass3 = String(elements.backupRestorePass3?.value || '').trim();
+  if (!pass1 || !pass2 || !pass3) {
+    if (elements.backupRestoreError) {
+      elements.backupRestoreError.textContent = 'Informe as 3 confirmações de senha.';
+    }
+    return;
+  }
+
+  const confirmBtn = elements.backupRestoreConfirm || null;
+  if (confirmBtn) {
+    confirmBtn.disabled = true;
+  }
+  if (elements.backupRestoreError) {
+    elements.backupRestoreError.textContent = '';
+  }
+
+  try {
+    const result = await window.api.backupRestore({
+      backupFolderName,
+      adminPasswords: [pass1, pass2, pass3]
+    });
+    const restoredCount = Number(result?.restoredCount || 0);
+    closeBackupRestoreModal();
+    showToast(`Backup restaurado com sucesso (${restoredCount} arquivo(s)). Reinicie o app para aplicar tudo.`);
+  } catch (error) {
+    if (elements.backupRestoreError) {
+      elements.backupRestoreError.textContent = error.message || 'Erro ao restaurar backup.';
+    }
+  } finally {
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+    }
+  }
+}
+
+function isTypingContextTarget(target) {
+  if (!target) {
+    return false;
+  }
+  const tag = String(target.tagName || '').toUpperCase();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+    return true;
+  }
+  return !!target.isContentEditable;
+}
+
+function handleMenuShortcutKeydown(event) {
+  if (!event || event.defaultPrevented) {
+    return;
+  }
+  if (event.ctrlKey || event.altKey || event.metaKey) {
+    return;
+  }
+  if (!elements.panelMenu || !elements.panelMenu.classList.contains('active')) {
+    return;
+  }
+  if (elements.appLoginModal && !elements.appLoginModal.hidden) {
+    return;
+  }
+  if (isTypingContextTarget(event.target)) {
+    return;
+  }
+
+  const key = String(event.key || '').trim();
+  const code = String(event.code || '').trim();
+  const resolved = key || (code.startsWith('Digit') || code.startsWith('Numpad') ? code.replace(/^(Digit|Numpad)/, '') : '');
+  const map = {
+    '1': 'main',
+    '2': 'pcp',
+    '3': 'fiscal',
+    '4': 'rh',
+    '5': 'settings',
+    '6': 'log'
+  };
+  const area = map[resolved];
+  if (!area) {
+    return;
+  }
+  event.preventDefault();
+  openAreaFromMenu(area);
+}
+
+document.addEventListener('keydown', handleMenuShortcutKeydown);
+
 if (elements.tabMain) {
   elements.tabMain.addEventListener('click', () => switchTab('main'));
+}
+if (elements.tabMenu) {
+  elements.tabMenu.addEventListener('click', () => switchTab('menu'));
 }
 if (elements.tabPcp) {
   elements.tabPcp.addEventListener('click', () => {
@@ -6643,6 +7723,32 @@ elements.btnSelectFolder.addEventListener('click', handleSelectFolder);
 if (elements.btnSelectFiscalRoot) {
   elements.btnSelectFiscalRoot.addEventListener('click', handleSelectFiscalRoot);
 }
+if (elements.btnRunBackupNow) {
+  elements.btnRunBackupNow.addEventListener('click', handleRunBackupNow);
+}
+if (elements.btnRestoreBackup) {
+  elements.btnRestoreBackup.addEventListener('click', openBackupRestoreModal);
+}
+if (elements.backupRestoreCancel) {
+  elements.backupRestoreCancel.addEventListener('click', closeBackupRestoreModal);
+}
+if (elements.backupRestoreBackdrop) {
+  elements.backupRestoreBackdrop.addEventListener('click', closeBackupRestoreModal);
+}
+if (elements.backupRestoreConfirm) {
+  elements.backupRestoreConfirm.addEventListener('click', handleRestoreBackupConfirm);
+}
+[elements.backupRestorePass1, elements.backupRestorePass2, elements.backupRestorePass3]
+  .filter(Boolean)
+  .forEach((input) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        handleRestoreBackupConfirm();
+      } else if (event.key === 'Escape') {
+        closeBackupRestoreModal();
+      }
+    });
+  });
 if (elements.btnUserAdd) {
   elements.btnUserAdd.addEventListener('click', () => {
     requireAdminSettings(() => openUserModal());
@@ -6777,11 +7883,46 @@ if (elements.fiscalOpenNfs) {
     renderFiscalScreen();
   });
 }
+if (elements.menuOpenMain) {
+  elements.menuOpenMain.addEventListener('click', () => openAreaFromMenu('main'));
+}
+if (elements.menuOpenPcp) {
+  elements.menuOpenPcp.addEventListener('click', () => openAreaFromMenu('pcp'));
+}
+if (elements.menuOpenFiscal) {
+  elements.menuOpenFiscal.addEventListener('click', () => openAreaFromMenu('fiscal'));
+}
+if (elements.menuOpenRh) {
+  elements.menuOpenRh.addEventListener('click', () => openAreaFromMenu('rh'));
+}
+if (elements.menuOpenSettings) {
+  elements.menuOpenSettings.addEventListener('click', () => openAreaFromMenu('settings'));
+}
+if (elements.menuOpenLog) {
+  elements.menuOpenLog.addEventListener('click', () => openAreaFromMenu('log'));
+}
+
+if (elements.fiscalOpenCompras) {
+  elements.fiscalOpenCompras.addEventListener('click', async () => {
+    try {
+      await openFiscalComprasView();
+    } catch (error) {
+      showToast(error.message || 'Erro ao abrir Solicitação de Compras.', true);
+    }
+  });
+}
 
 if (elements.fiscalBackMenu) {
   elements.fiscalBackMenu.addEventListener('click', () => {
     state.fiscalSelectionNf = null;
     state.fiscalNfItems = [];
+    state.fiscalView = 'menu';
+    renderFiscalScreen();
+  });
+}
+
+if (elements.fiscalComprasBackMenu) {
+  elements.fiscalComprasBackMenu.addEventListener('click', () => {
     state.fiscalView = 'menu';
     renderFiscalScreen();
   });
@@ -6967,12 +8108,160 @@ if (elements.fiscalDeleteConfirm) {
   });
 }
 
+if (elements.fiscalComprasRefresh) {
+  elements.fiscalComprasRefresh.addEventListener('click', async () => {
+    try {
+      await loadFiscalComprasContext();
+      await loadFiscalComprasRows();
+      applyFiscalComprasPermissionsUi();
+      showToast('Solicitações de compra atualizadas.');
+    } catch (error) {
+      showToast(error.message || 'Erro ao atualizar solicitações de compra.', true);
+    }
+  });
+}
+
+if (elements.fiscalComprasNew) {
+  elements.fiscalComprasNew.addEventListener('click', () => {
+    if (!canFiscalComprasCreate()) {
+      showToast('Usuário sem permissão para criar solicitação de compra.', true);
+      return;
+    }
+    resetFiscalComprasForm();
+    setFiscalComprasTab('form');
+  });
+}
+
+if (elements.fiscalComprasTabForm) {
+  elements.fiscalComprasTabForm.addEventListener('click', () => setFiscalComprasTab('form'));
+}
+if (elements.fiscalComprasTabConsulta) {
+  elements.fiscalComprasTabConsulta.addEventListener('click', async () => {
+    setFiscalComprasTab('consulta');
+    await loadFiscalComprasRows();
+  });
+}
+
+if (elements.fiscalComprasAddItem) {
+  elements.fiscalComprasAddItem.addEventListener('click', () => {
+    if (!canFiscalComprasCreate() && !canFiscalComprasEdit()) {
+      showToast('Usuário sem permissão para editar itens.', true);
+      return;
+    }
+    const items = readFiscalComprasItemsFromForm();
+    items.push(createFiscalCompraItemSeed());
+    renderFiscalComprasItems(items);
+    recalcFiscalComprasTotalForm();
+  });
+}
+
+if (elements.fiscalComprasCancel) {
+  elements.fiscalComprasCancel.addEventListener('click', () => {
+    resetFiscalComprasForm();
+  });
+}
+
+async function saveFiscalCompraFromForm({ generatePdf = false } = {}) {
+  try {
+    const id = String(elements.fiscalComprasId?.value || '').trim();
+    const payload = {
+      username: getAuthUsername(),
+      id,
+      data_solicitacao: String(elements.fiscalComprasDataSolic?.value || '').trim(),
+      setor: String(elements.fiscalComprasSetor?.value || '').trim(),
+      destinado_a: String(elements.fiscalComprasDestinado?.value || '').trim(),
+      observacoes: String(elements.fiscalComprasObservacoes?.value || '').trim(),
+      status: String(elements.fiscalComprasStatus?.value || 'PENDENTE').trim(),
+      itens: readFiscalComprasItemsFromForm()
+    };
+    if (elements.fiscalComprasError) {
+      elements.fiscalComprasError.textContent = '';
+    }
+    if (elements.fiscalComprasSave) elements.fiscalComprasSave.disabled = true;
+    if (elements.fiscalComprasSavePdf) elements.fiscalComprasSavePdf.disabled = true;
+
+    const result = await window.api.fiscalComprasUpsert(payload);
+    const rowId = result && result.row ? result.row.id : '';
+    if (generatePdf && canFiscalComprasPdf() && rowId) {
+      await window.api.fiscalComprasPdfRegen({ username: getAuthUsername(), id: rowId });
+    }
+    await loadFiscalComprasRows();
+    showToast(generatePdf ? 'Solicitação salva e PDF gerado.' : 'Solicitação salva.');
+    if (result && result.row) {
+      fillFiscalComprasForm(result.row);
+    }
+    setFiscalComprasTab('consulta');
+  } catch (error) {
+    if (elements.fiscalComprasError) {
+      elements.fiscalComprasError.textContent = error.message || 'Erro ao salvar solicitação.';
+    } else {
+      showToast(error.message || 'Erro ao salvar solicitação.', true);
+    }
+  } finally {
+    applyFiscalComprasPermissionsUi();
+  }
+}
+
+if (elements.fiscalComprasSave) {
+  elements.fiscalComprasSave.addEventListener('click', async () => {
+    await saveFiscalCompraFromForm({ generatePdf: false });
+  });
+}
+if (elements.fiscalComprasSavePdf) {
+  elements.fiscalComprasSavePdf.addEventListener('click', async () => {
+    await saveFiscalCompraFromForm({ generatePdf: true });
+  });
+}
+
+if (elements.fiscalComprasFilterClear) {
+  elements.fiscalComprasFilterClear.addEventListener('click', async () => {
+    if (elements.fiscalComprasFilterIni) elements.fiscalComprasFilterIni.value = '';
+    if (elements.fiscalComprasFilterFim) elements.fiscalComprasFilterFim.value = '';
+    if (elements.fiscalComprasFilterSolicitante) elements.fiscalComprasFilterSolicitante.value = '';
+    if (elements.fiscalComprasFilterSetor) elements.fiscalComprasFilterSetor.value = '';
+    if (elements.fiscalComprasFilterNumero) elements.fiscalComprasFilterNumero.value = '';
+    if (elements.fiscalComprasFilterFornecedor) elements.fiscalComprasFilterFornecedor.value = '';
+    if (elements.fiscalComprasFilterItem) elements.fiscalComprasFilterItem.value = '';
+    if (elements.fiscalComprasFilterStatus) elements.fiscalComprasFilterStatus.value = '';
+    state.fiscalComprasFilters = {};
+    await loadFiscalComprasRows();
+  });
+}
+
+if (elements.fiscalComprasFilterApply) {
+  elements.fiscalComprasFilterApply.addEventListener('click', async () => {
+    state.fiscalComprasFilters = {
+      data_ini: String(elements.fiscalComprasFilterIni?.value || '').trim(),
+      data_fim: String(elements.fiscalComprasFilterFim?.value || '').trim(),
+      solicitante: String(elements.fiscalComprasFilterSolicitante?.value || '').trim(),
+      setor: String(elements.fiscalComprasFilterSetor?.value || '').trim(),
+      numero_requisicao: String(elements.fiscalComprasFilterNumero?.value || '').trim(),
+      fornecedor: String(elements.fiscalComprasFilterFornecedor?.value || '').trim(),
+      item_descricao: String(elements.fiscalComprasFilterItem?.value || '').trim(),
+      status: String(elements.fiscalComprasFilterStatus?.value || '').trim()
+    };
+    await loadFiscalComprasRows();
+  });
+}
+
 if (elements.userModalConfirm) {
   elements.userModalConfirm.addEventListener('click', async () => {
     try {
       const username = String(elements.userUsername?.value || '').trim();
       const password = String(elements.userPassword?.value || '').trim();
       const permissions = collectUserModalPermissions();
+      if (!permissions.fiscal) {
+        FISCAL_COMPRAS_PERMISSION_DEFS.forEach((perm) => {
+          permissions[perm.key] = false;
+        });
+      } else {
+        const hasComprasEnabled = FISCAL_COMPRAS_PERMISSION_DEFS.some((perm) => !!permissions[perm.key]);
+        if (!hasComprasEnabled) {
+          FISCAL_COMPRAS_PERMISSION_DEFS.forEach((perm) => {
+            permissions[perm.key] = true;
+          });
+        }
+      }
 
       if (!username || !password) {
         elements.userModalError.textContent = 'Informe usuário e senha.';

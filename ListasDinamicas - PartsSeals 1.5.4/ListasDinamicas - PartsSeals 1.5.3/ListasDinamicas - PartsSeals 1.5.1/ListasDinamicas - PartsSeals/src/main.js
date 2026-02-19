@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
+const os = require('os');
 const XLSX = require('xlsx');
 
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
@@ -11,10 +12,15 @@ const DEFAULT_SETTINGS = {
   rootFolder: '',
   fiscalRoot: '',
   trackingApiKey: '',
+  backupLastRunYmd: '',
+  backupLastRunAtIso: '',
   theme: 'light',
   lastLoginUsername: ''
 };
 const ADMIN_SETTINGS_PASSWORD = '0604';
+const BACKUP_SCHEDULE_HOUR = 8;
+const BACKUP_RETENTION_DAYS = 15;
+let BACKUP_SCHEDULER_TIMER = null;
 
 const XLSX_READ_OPTIONS = { cellDates: true };
 const XLSX_WORKBOOK_CACHE = new Map(); // filePath -> { mtimeMs, workbook }
@@ -22,6 +28,7 @@ const WORKBOOK_AOA_CACHE = new WeakMap(); // workbook -> Map(sheetName -> aoa)
 const WORKBOOK_OBJECTS_CACHE = new WeakMap(); // workbook -> Map(sheetName -> objects[])
 const RH_HORAS_MONTH_INDEX_CACHE = new WeakMap(); // workbook -> { source: objects[], byMonth: Map<YYYY-MM, objects[]> }
 const RH_ENSURED_WORKBOOKS = new WeakSet();
+const FISCAL_COMPRAS_ENSURED_WORKBOOKS = new WeakSet();
 
 const FAST_CACHE_VERSION = 1;
 const FAST_CACHE_ROOT_FOLDER = () => path.join(app.getPath('userData'), 'fast-cache');
@@ -685,6 +692,10 @@ function normalizeText(value) {
     .toUpperCase();
 }
 
+function normalizeForFilter(value) {
+  return normalizeText(value);
+}
+
 function parseHeHoursFromCell(cell) {
   if (!cell) {
     return 0;
@@ -863,6 +874,7 @@ const FISCAL_RNC_RELATIVE = ['PartsSeals', 'Rnc Interna', 'Relatório de Não Co
 const PCP_DASHBOARD_DAILY_RELATIVE = ['PartsSeals', 'PROGRAMAÇÃO DE PRODUÇÃO-DIARIA'];
 const PCP_DASHBOARD_DAILY_RELATIVE_LEGACY = ['Rede', 'PartsSeals', 'Programação de Produção Diaria'];
 const RH_HE_DB_RELATIVE = ['Arquivos KuruJoos', 'RH', 'GestaoHorasExtras.xlsx'];
+const FISCAL_COMPRAS_DB_RELATIVE = ['Arquivos KuruJoos', 'Fiscal', 'SolicitacoesCompras.xlsx'];
 
 function ensureDirSync(folderPath) {
   if (!folderPath) {
@@ -3313,6 +3325,926 @@ async function openRhSolicitacaoHePdf({ username, id }) {
   return { ok: true, filePath: pdfPath };
 }
 
+function resolveFiscalComprasDbPath() {
+  return resolveFiscalPath(FISCAL_COMPRAS_DB_RELATIVE);
+}
+
+function createFiscalComprasWorkbookIfMissing(filePath) {
+  ensureDirSync(path.dirname(filePath));
+  const wb = XLSX.utils.book_new();
+  writeSheetAoa(wb, 'SOLICITACOES_COMPRA', [[
+    'ID', 'NUMERO_REQUISICAO', 'DATA_SOLICITACAO', 'SOLICITADO_POR', 'SETOR', 'DESTINADO_A',
+    'OBSERVACOES', 'STATUS', 'APROVACAO_OBS', 'TOTAL_GERAL_ESTIMADO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+  ]]);
+  writeSheetAoa(wb, 'ITENS_SOLICITACAO', [[
+    'ID', 'SOLICITACAO_ID', 'ORDEM', 'QUANTIDADE', 'UNIDADE', 'DESCRICAO', 'FORNECEDOR_ESCOLHIDO',
+    'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+  ]]);
+  writeSheetAoa(wb, 'COTACOES_FORNECEDORES', [[
+    'ID', 'ITEM_ID', 'ORDEM', 'FORNECEDOR_NOME', 'TIPO_PAGAMENTO', 'VALOR_UNITARIO',
+    'PRAZO_ENTREGA', 'SUBTOTAL', 'IS_ESCOLHIDO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+  ]]);
+  writeSheetAoa(wb, 'FORNECEDORES', [[
+    'ID', 'NOME', 'TIPO_PAGAMENTO_PADRAO', 'CREATED_AT', 'UPDATED_AT', 'DELETED_AT'
+  ]]);
+  writeSheetAoa(wb, 'LOG_ALTERACOES', [[
+    'ID', 'DATA_HORA', 'USERNAME', 'ACAO', 'ENTIDADE', 'ENTIDADE_ID', 'DETALHES_JSON'
+  ]]);
+  writeWorkbookFile(wb, filePath);
+  return wb;
+}
+
+function ensureFiscalComprasSheets(workbook) {
+  const required = {
+    SOLICITACOES_COMPRA: [
+      'ID', 'NUMERO_REQUISICAO', 'DATA_SOLICITACAO', 'SOLICITADO_POR', 'SETOR', 'DESTINADO_A',
+      'OBSERVACOES', 'STATUS', 'APROVACAO_OBS', 'TOTAL_GERAL_ESTIMADO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+    ],
+    ITENS_SOLICITACAO: [
+      'ID', 'SOLICITACAO_ID', 'ORDEM', 'QUANTIDADE', 'UNIDADE', 'DESCRICAO', 'FORNECEDOR_ESCOLHIDO',
+      'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+    ],
+    COTACOES_FORNECEDORES: [
+      'ID', 'ITEM_ID', 'ORDEM', 'FORNECEDOR_NOME', 'TIPO_PAGAMENTO', 'VALOR_UNITARIO',
+      'PRAZO_ENTREGA', 'SUBTOTAL', 'IS_ESCOLHIDO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+    ],
+    FORNECEDORES: ['ID', 'NOME', 'TIPO_PAGAMENTO_PADRAO', 'CREATED_AT', 'UPDATED_AT', 'DELETED_AT'],
+    LOG_ALTERACOES: ['ID', 'DATA_HORA', 'USERNAME', 'ACAO', 'ENTIDADE', 'ENTIDADE_ID', 'DETALHES_JSON']
+  };
+
+  Object.entries(required).forEach(([sheetName, headers]) => {
+    if (!workbook.Sheets[sheetName]) {
+      writeSheetAoa(workbook, sheetName, [headers]);
+      return;
+    }
+    const aoa = readSheetAoa(workbook, sheetName);
+    const existingHeader = Array.isArray(aoa[0]) ? aoa[0].map((h) => String(h || '').trim().toUpperCase()) : [];
+    const missing = headers.map((h) => String(h || '').trim().toUpperCase()).filter((h) => !existingHeader.includes(h));
+    if (!missing.length) {
+      return;
+    }
+    const nextHeader = [...existingHeader, ...missing];
+    const nextAoa = [nextHeader];
+    for (let i = 1; i < aoa.length; i += 1) {
+      const row = Array.isArray(aoa[i]) ? [...aoa[i]] : [];
+      while (row.length < nextHeader.length) {
+        row.push('');
+      }
+      nextAoa.push(row);
+    }
+    writeSheetAoa(workbook, sheetName, nextAoa);
+  });
+}
+
+function readFiscalComprasDb() {
+  const filePath = resolveFiscalComprasDbPath();
+  if (!fs.existsSync(filePath)) {
+    const workbook = createFiscalComprasWorkbookIfMissing(filePath);
+    ensureFiscalComprasSheets(workbook);
+    FISCAL_COMPRAS_ENSURED_WORKBOOKS.add(workbook);
+    const mtimeMs = getFileMtimeMs(filePath);
+    XLSX_WORKBOOK_CACHE.set(filePath, { workbook, mtimeMs });
+    return { workbook, filePath };
+  }
+  const { workbook } = readWorkbookCached(filePath);
+  if (!FISCAL_COMPRAS_ENSURED_WORKBOOKS.has(workbook)) {
+    ensureFiscalComprasSheets(workbook);
+    FISCAL_COMPRAS_ENSURED_WORKBOOKS.add(workbook);
+  }
+  return { workbook, filePath };
+}
+
+function getPermissionWithFallback(perms, key, fallback) {
+  if (perms && Object.prototype.hasOwnProperty.call(perms, key)) {
+    return !!perms[key];
+  }
+  return !!fallback;
+}
+
+function ensureFiscalComprasAccess(username, action = 'view') {
+  const safeUser = normalizeUsername(username);
+  if (!safeUser) {
+    throw new Error('Usuário obrigatório.');
+  }
+  const user = listUsers().find((u) => normalizeUsername(u.username) === safeUser) || null;
+  if (!user) {
+    throw new Error('Usuário não encontrado.');
+  }
+  const perms = normalizePermissions(user.permissions || {});
+  if (!perms.fiscal) {
+    throw new Error('Usuário sem permissão para acessar o Fiscal.');
+  }
+  const map = {
+    view: getPermissionWithFallback(perms, 'compras_view', perms.fiscal),
+    create: getPermissionWithFallback(perms, 'compras_create', perms.fiscal),
+    edit: getPermissionWithFallback(perms, 'compras_edit', perms.fiscal),
+    delete: getPermissionWithFallback(perms, 'compras_delete', perms.fiscal),
+    pdf: getPermissionWithFallback(perms, 'compras_pdf', perms.fiscal),
+    approve: getPermissionWithFallback(perms, 'compras_approve', perms.fiscal)
+  };
+  if (!map[action]) {
+    throw new Error('Usuário sem permissão para esta ação na Solicitação de Compras.');
+  }
+  return { username: safeUser, permissions: map, isAdmin: safeUser === 'ADM' };
+}
+
+function appendFiscalComprasLog(workbook, { username, acao, entidade, entidadeId, detalhes }) {
+  const aoa = readSheetAoa(workbook, 'LOG_ALTERACOES');
+  const header = getHeaderFromAoa(aoa, ['ID', 'DATA_HORA', 'USERNAME', 'ACAO', 'ENTIDADE', 'ENTIDADE_ID', 'DETALHES_JSON']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  let maxId = 0;
+  rows.forEach((row) => {
+    const n = Number(String(row.ID || '').trim());
+    if (Number.isFinite(n) && n > maxId) {
+      maxId = n;
+    }
+  });
+  rows.push({
+    ID: String(maxId + 1),
+    DATA_HORA: new Date().toISOString(),
+    USERNAME: normalizeUsername(username),
+    ACAO: String(acao || '').trim(),
+    ENTIDADE: String(entidade || '').trim(),
+    ENTIDADE_ID: String(entidadeId || '').trim(),
+    DETALHES_JSON: JSON.stringify(detalhes && typeof detalhes === 'object' ? detalhes : {})
+  });
+  writeSheetAoa(workbook, 'LOG_ALTERACOES', objectsToAoa(header, rows));
+}
+
+function nextNumericId(rows) {
+  let max = 0;
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const n = Number(String(row.ID || '').trim());
+    if (Number.isFinite(n) && n > max) {
+      max = n;
+    }
+  });
+  return max + 1;
+}
+
+function normalizeCompraStatus(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (text === 'PENDENTE' || text === 'APROVADA' || text === 'CANCELADA') {
+    return text;
+  }
+  if (text === 'CRIADA') return 'PENDENTE';
+  if (text === 'PEDIDO_GERADO' || text === 'FINALIZADA') return 'APROVADA';
+  return 'PENDENTE';
+}
+
+function getSolicitacoesCompraSheet(workbook) {
+  const aoa = readSheetAoa(workbook, 'SOLICITACOES_COMPRA');
+  const header = getHeaderFromAoa(aoa, [
+    'ID', 'NUMERO_REQUISICAO', 'DATA_SOLICITACAO', 'SOLICITADO_POR', 'SETOR', 'DESTINADO_A',
+    'OBSERVACOES', 'STATUS', 'APROVACAO_OBS', 'TOTAL_GERAL_ESTIMADO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  return { aoa, header, rows };
+}
+
+function getItensSolicitacaoSheet(workbook) {
+  const aoa = readSheetAoa(workbook, 'ITENS_SOLICITACAO');
+  const header = getHeaderFromAoa(aoa, [
+    'ID', 'SOLICITACAO_ID', 'ORDEM', 'QUANTIDADE', 'UNIDADE', 'DESCRICAO', 'FORNECEDOR_ESCOLHIDO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  return { aoa, header, rows };
+}
+
+function getCotacoesFornecedoresSheet(workbook) {
+  const aoa = readSheetAoa(workbook, 'COTACOES_FORNECEDORES');
+  const header = getHeaderFromAoa(aoa, [
+    'ID', 'ITEM_ID', 'ORDEM', 'FORNECEDOR_NOME', 'TIPO_PAGAMENTO', 'VALOR_UNITARIO',
+    'PRAZO_ENTREGA', 'SUBTOTAL', 'IS_ESCOLHIDO', 'DATA_CRIACAO', 'ULTIMA_ATUALIZACAO', 'DELETED_AT'
+  ]);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  return { aoa, header, rows };
+}
+
+function getFornecedoresSheet(workbook) {
+  const aoa = readSheetAoa(workbook, 'FORNECEDORES');
+  const header = getHeaderFromAoa(aoa, ['ID', 'NOME', 'TIPO_PAGAMENTO_PADRAO', 'CREATED_AT', 'UPDATED_AT', 'DELETED_AT']);
+  const rows = mapAoaToObjects([header, ...(aoa.slice(1) || [])]);
+  return { aoa, header, rows };
+}
+
+function nextSolicitacaoCompraNumero(rows, year) {
+  const yyyy = Number(year);
+  const prefix = `SC-${yyyy}-`;
+  let maxSeq = 0;
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const num = String(row.NUMERO_REQUISICAO || '').trim();
+    if (!num.startsWith(prefix)) {
+      return;
+    }
+    const seq = Number(num.slice(prefix.length));
+    if (Number.isFinite(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  });
+  return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+}
+
+function upsertFornecedorCache(rows, fornecedorNome, tipoPagamento, nowIso) {
+  const safeNome = String(fornecedorNome || '').trim();
+  const safePagamento = String(tipoPagamento || '').trim();
+  if (!safeNome) {
+    return;
+  }
+  const found = (rows || []).find((r) => !String(r.DELETED_AT || '').trim() && normalizeForFilter(r.NOME) === normalizeForFilter(safeNome));
+  if (found) {
+    found.NOME = safeNome;
+    if (safePagamento) {
+      found.TIPO_PAGAMENTO_PADRAO = safePagamento;
+    }
+    found.UPDATED_AT = nowIso;
+    return;
+  }
+  rows.push({
+    ID: String(nextNumericId(rows)),
+    NOME: safeNome,
+    TIPO_PAGAMENTO_PADRAO: safePagamento,
+    CREATED_AT: nowIso,
+    UPDATED_AT: nowIso,
+    DELETED_AT: ''
+  });
+}
+
+function parseCompraPayloadItems(items) {
+  const parsed = Array.isArray(items) ? items : [];
+  return parsed.map((item) => {
+    const quantidade = Number(item && item.quantidade);
+    const cotacoesRaw = Array.isArray(item && item.cotacoes) ? item.cotacoes.slice(0, 3) : [];
+    const cotacoes = cotacoesRaw
+      .map((cot) => {
+        const fornecedor_nome = String(cot && cot.fornecedor_nome ? cot.fornecedor_nome : '').trim();
+        const tipo_pagamento = String(cot && cot.tipo_pagamento ? cot.tipo_pagamento : '').trim();
+        const valor_unitario = Number(cot && cot.valor_unitario);
+        const prazo_entrega = String(cot && cot.prazo_entrega ? cot.prazo_entrega : '').trim();
+        if (!fornecedor_nome && !tipo_pagamento && !valor_unitario && !prazo_entrega) {
+          return null;
+        }
+        if (!fornecedor_nome) {
+          throw new Error('Fornecedor obrigatório na cotação.');
+        }
+        if (!Number.isFinite(valor_unitario) || valor_unitario <= 0) {
+          throw new Error(`Valor unitário inválido para fornecedor ${fornecedor_nome}.`);
+        }
+        return { fornecedor_nome, tipo_pagamento, valor_unitario, prazo_entrega, subtotal: quantidade > 0 ? quantidade * valor_unitario : 0 };
+      })
+      .filter(Boolean);
+    let fornecedorEscolhido = String(item && item.fornecedor_escolhido ? item.fornecedor_escolhido : '').trim();
+    if (!fornecedorEscolhido && cotacoes.length) {
+      const best = [...cotacoes].sort((a, b) => a.valor_unitario - b.valor_unitario)[0];
+      fornecedorEscolhido = best ? best.fornecedor_nome : '';
+    }
+    return {
+      quantidade,
+      unidade: String(item && item.unidade ? item.unidade : '').trim(),
+      descricao: String(item && item.descricao ? item.descricao : '').trim(),
+      fornecedor_escolhido: fornecedorEscolhido,
+      cotacoes
+    };
+  });
+}
+
+function upsertFiscalSolicitacaoCompra(payload) {
+  const safeId = String(payload && payload.id ? payload.id : '').trim();
+  const action = safeId ? 'edit' : 'create';
+  const ctx = ensureFiscalComprasAccess(String(payload && payload.username || '').trim(), action);
+  const now = new Date().toISOString();
+  const today = formatDateToYmdLocal(new Date());
+  const data_solicitacao = String(payload && payload.data_solicitacao ? payload.data_solicitacao : '').trim() || today;
+  const setor = String(payload && payload.setor ? payload.setor : '').trim();
+  const destinado_a = String(payload && payload.destinado_a ? payload.destinado_a : '').trim();
+  const observacoes = String(payload && payload.observacoes ? payload.observacoes : '').trim();
+  const status = normalizeCompraStatus(payload && payload.status ? payload.status : 'PENDENTE');
+  const itens = parseCompraPayloadItems(payload && payload.itens);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data_solicitacao)) throw new Error('Data da solicitação inválida.');
+  if (!setor) throw new Error('Setor obrigatório.');
+  if (!destinado_a) throw new Error('Destinado a obrigatório.');
+  if (!Array.isArray(itens) || !itens.length) throw new Error('Inclua ao menos 1 item na solicitação.');
+  itens.forEach((item, index) => {
+    if (!Number.isFinite(item.quantidade) || item.quantidade <= 0) throw new Error(`Quantidade inválida no item ${index + 1}.`);
+    if (!item.unidade) throw new Error(`Unidade obrigatória no item ${index + 1}.`);
+    if (!item.descricao) throw new Error(`Descrição obrigatória no item ${index + 1}.`);
+    if (!item.cotacoes.length) throw new Error(`Cadastre ao menos 1 fornecedor no item ${index + 1}.`);
+  });
+  if (status === 'APROVADA' && !ctx.permissions.approve) {
+    throw new Error('Usuário sem permissão para aprovar compra.');
+  }
+
+  const { workbook, filePath } = readFiscalComprasDb();
+  const { header: solicitHeader, rows: solicitRows } = getSolicitacoesCompraSheet(workbook);
+  const { header: itensHeader, rows: itensRows } = getItensSolicitacaoSheet(workbook);
+  const { header: cotHeader, rows: cotRows } = getCotacoesFornecedoresSheet(workbook);
+  const { header: fornHeader, rows: fornRows } = getFornecedoresSheet(workbook);
+
+  let row = null;
+  let before = null;
+  if (safeId) {
+    row = solicitRows.find((r) => !String(r.DELETED_AT || '').trim() && String(r.ID || '').trim() === safeId) || null;
+    if (!row) throw new Error('Solicitação não encontrada.');
+    before = { ...row };
+  }
+  if (!row) {
+    row = {
+      ID: String(nextNumericId(solicitRows)),
+      NUMERO_REQUISICAO: nextSolicitacaoCompraNumero(solicitRows, Number(String(data_solicitacao).slice(0, 4))),
+      DATA_CRIACAO: now,
+      DELETED_AT: '',
+      SOLICITADO_POR: ctx.username,
+      APROVACAO_OBS: ''
+    };
+    solicitRows.push(row);
+  }
+
+  const solicitId = String(row.ID || '').trim();
+  const oldItemIds = new Set(
+    itensRows.filter((r) => !String(r.DELETED_AT || '').trim() && String(r.SOLICITACAO_ID || '').trim() === solicitId).map((r) => String(r.ID || '').trim())
+  );
+  itensRows.forEach((itemRow) => {
+    if (String(itemRow.SOLICITACAO_ID || '').trim() === solicitId && !String(itemRow.DELETED_AT || '').trim()) {
+      itemRow.DELETED_AT = now;
+      itemRow.ULTIMA_ATUALIZACAO = now;
+    }
+  });
+  cotRows.forEach((cotRow) => {
+    if (oldItemIds.has(String(cotRow.ITEM_ID || '').trim()) && !String(cotRow.DELETED_AT || '').trim()) {
+      cotRow.DELETED_AT = now;
+      cotRow.ULTIMA_ATUALIZACAO = now;
+    }
+  });
+
+  let itemIdSeed = nextNumericId(itensRows);
+  let cotIdSeed = nextNumericId(cotRows);
+  let totalGeral = 0;
+  const responseItems = [];
+
+  itens.forEach((item, idx) => {
+    const itemId = String(itemIdSeed++);
+    const normalizedEscolhido = normalizeForFilter(item.fornecedor_escolhido);
+    const chosen = item.cotacoes.find((cot) => normalizeForFilter(cot.fornecedor_nome) === normalizedEscolhido)
+      || [...item.cotacoes].sort((a, b) => Number(a.valor_unitario || 0) - Number(b.valor_unitario || 0))[0];
+    const fornecedorEscolhido = chosen ? String(chosen.fornecedor_nome || '').trim() : '';
+    const chosenSubtotal = chosen ? Number(chosen.subtotal || 0) : 0;
+    totalGeral += chosenSubtotal;
+
+    itensRows.push({
+      ID: itemId,
+      SOLICITACAO_ID: solicitId,
+      ORDEM: String(idx + 1),
+      QUANTIDADE: Number(item.quantidade || 0),
+      UNIDADE: item.unidade,
+      DESCRICAO: item.descricao,
+      FORNECEDOR_ESCOLHIDO: fornecedorEscolhido,
+      DATA_CRIACAO: now,
+      ULTIMA_ATUALIZACAO: now,
+      DELETED_AT: ''
+    });
+
+    const best = [...item.cotacoes].sort((a, b) => Number(a.valor_unitario || 0) - Number(b.valor_unitario || 0))[0];
+    const responseCotacoes = [];
+    item.cotacoes.forEach((cot, cotIdx) => {
+      cotRows.push({
+        ID: String(cotIdSeed++),
+        ITEM_ID: itemId,
+        ORDEM: String(cotIdx + 1),
+        FORNECEDOR_NOME: cot.fornecedor_nome,
+        TIPO_PAGAMENTO: cot.tipo_pagamento,
+        VALOR_UNITARIO: Number(cot.valor_unitario || 0),
+        PRAZO_ENTREGA: cot.prazo_entrega,
+        SUBTOTAL: Number(cot.subtotal || 0),
+        IS_ESCOLHIDO: normalizeForFilter(cot.fornecedor_nome) === normalizeForFilter(fornecedorEscolhido) ? '1' : '0',
+        DATA_CRIACAO: now,
+        ULTIMA_ATUALIZACAO: now,
+        DELETED_AT: ''
+      });
+      upsertFornecedorCache(fornRows, cot.fornecedor_nome, cot.tipo_pagamento, now);
+      responseCotacoes.push({
+        fornecedor_nome: cot.fornecedor_nome,
+        tipo_pagamento: cot.tipo_pagamento,
+        valor_unitario: Number(cot.valor_unitario || 0),
+        prazo_entrega: cot.prazo_entrega,
+        subtotal: Number(cot.subtotal || 0),
+        is_escolhido: normalizeForFilter(cot.fornecedor_nome) === normalizeForFilter(fornecedorEscolhido),
+        is_melhor_preco: best && normalizeForFilter(cot.fornecedor_nome) === normalizeForFilter(best.fornecedor_nome)
+      });
+    });
+
+    responseItems.push({
+      quantidade: Number(item.quantidade || 0),
+      unidade: item.unidade,
+      descricao: item.descricao,
+      fornecedor_escolhido: fornecedorEscolhido,
+      cotacoes: responseCotacoes
+    });
+  });
+
+  row.DATA_SOLICITACAO = data_solicitacao;
+  row.SOLICITADO_POR = row.SOLICITADO_POR || ctx.username;
+  row.SETOR = setor;
+  row.DESTINADO_A = destinado_a;
+  row.OBSERVACOES = observacoes;
+  row.STATUS = status;
+  row.TOTAL_GERAL_ESTIMADO = Number(totalGeral || 0);
+  row.ULTIMA_ATUALIZACAO = now;
+  row.DELETED_AT = '';
+
+  writeSheetAoa(workbook, 'SOLICITACOES_COMPRA', objectsToAoa(solicitHeader, solicitRows));
+  writeSheetAoa(workbook, 'ITENS_SOLICITACAO', objectsToAoa(itensHeader, itensRows));
+  writeSheetAoa(workbook, 'COTACOES_FORNECEDORES', objectsToAoa(cotHeader, cotRows));
+  writeSheetAoa(workbook, 'FORNECEDORES', objectsToAoa(fornHeader, fornRows));
+  appendFiscalComprasLog(workbook, {
+    username: ctx.username,
+    acao: safeId ? 'SOLICITACAO_COMPRA_UPDATE' : 'SOLICITACAO_COMPRA_CREATE',
+    entidade: 'SOLICITACOES_COMPRA',
+    entidadeId: solicitId,
+    detalhes: { before, after: row, itens: responseItems.length }
+  });
+  writeWorkbookFile(workbook, filePath);
+
+  return {
+    ok: true,
+    row: {
+      id: solicitId,
+      numero_requisicao: String(row.NUMERO_REQUISICAO || '').trim(),
+      data_solicitacao: String(row.DATA_SOLICITACAO || '').trim(),
+      solicitado_por: String(row.SOLICITADO_POR || '').trim(),
+      setor: String(row.SETOR || '').trim(),
+      destinado_a: String(row.DESTINADO_A || '').trim(),
+      observacoes: String(row.OBSERVACOES || '').trim(),
+      status: String(row.STATUS || '').trim(),
+      aprovacao_obs: String(row.APROVACAO_OBS || '').trim(),
+      total_geral_estimado: Number(row.TOTAL_GERAL_ESTIMADO || 0),
+      itens: responseItems
+    }
+  };
+}
+
+function readFiscalComprasAggregate(workbook) {
+  const solicitRows = getSolicitacoesCompraSheet(workbook).rows.filter((r) => !String(r.DELETED_AT || '').trim());
+  const itensRows = getItensSolicitacaoSheet(workbook).rows.filter((r) => !String(r.DELETED_AT || '').trim());
+  const cotRows = getCotacoesFornecedoresSheet(workbook).rows.filter((r) => !String(r.DELETED_AT || '').trim());
+  const itensBySolic = new Map();
+  const cotByItem = new Map();
+  cotRows.forEach((cot) => {
+    const key = String(cot.ITEM_ID || '').trim();
+    if (!cotByItem.has(key)) cotByItem.set(key, []);
+    cotByItem.get(key).push(cot);
+  });
+  itensRows.forEach((item) => {
+    const key = String(item.SOLICITACAO_ID || '').trim();
+    if (!itensBySolic.has(key)) itensBySolic.set(key, []);
+    itensBySolic.get(key).push(item);
+  });
+
+  return solicitRows.map((solicit) => {
+    const solicitId = String(solicit.ID || '').trim();
+    const itemRows = (itensBySolic.get(solicitId) || []).sort((a, b) => Number(a.ORDEM || 0) - Number(b.ORDEM || 0));
+    const itens = itemRows.map((item) => {
+      const itemId = String(item.ID || '').trim();
+      const cotacoes = (cotByItem.get(itemId) || []).sort((a, b) => Number(a.ORDEM || 0) - Number(b.ORDEM || 0)).map((cot) => ({
+        fornecedor_nome: String(cot.FORNECEDOR_NOME || '').trim(),
+        tipo_pagamento: String(cot.TIPO_PAGAMENTO || '').trim(),
+        valor_unitario: Number(cot.VALOR_UNITARIO || 0),
+        prazo_entrega: String(cot.PRAZO_ENTREGA || '').trim(),
+        subtotal: Number(cot.SUBTOTAL || 0),
+        is_escolhido: String(cot.IS_ESCOLHIDO || '').trim() === '1'
+      }));
+      let bestUnit = Number.POSITIVE_INFINITY;
+      cotacoes.forEach((cot) => {
+        if (cot.valor_unitario > 0) bestUnit = Math.min(bestUnit, cot.valor_unitario);
+      });
+      cotacoes.forEach((cot) => {
+        cot.is_melhor_preco = Number.isFinite(bestUnit) && cot.valor_unitario > 0 && Math.abs(cot.valor_unitario - bestUnit) < 0.000001;
+      });
+      return {
+        id: itemId,
+        quantidade: Number(item.QUANTIDADE || 0),
+        unidade: String(item.UNIDADE || '').trim(),
+        descricao: String(item.DESCRICAO || '').trim(),
+        fornecedor_escolhido: String(item.FORNECEDOR_ESCOLHIDO || '').trim(),
+        cotacoes
+      };
+    });
+    return {
+      id: solicitId,
+      numero_requisicao: String(solicit.NUMERO_REQUISICAO || '').trim(),
+      data_solicitacao: String(solicit.DATA_SOLICITACAO || '').trim(),
+      solicitado_por: String(solicit.SOLICITADO_POR || '').trim(),
+      setor: String(solicit.SETOR || '').trim(),
+      destinado_a: String(solicit.DESTINADO_A || '').trim(),
+      observacoes: String(solicit.OBSERVACOES || '').trim(),
+      status: normalizeCompraStatus(String(solicit.STATUS || '').trim()),
+      aprovacao_obs: String(solicit.APROVACAO_OBS || '').trim(),
+      total_geral_estimado: Number(solicit.TOTAL_GERAL_ESTIMADO || 0),
+      data_criacao: String(solicit.DATA_CRIACAO || '').trim(),
+      ultima_atualizacao: String(solicit.ULTIMA_ATUALIZACAO || '').trim(),
+      itens
+    };
+  });
+}
+
+function listFiscalFornecedores({ username }) {
+  ensureFiscalComprasAccess(username, 'view');
+  const { workbook } = readFiscalComprasDb();
+  const { rows } = getFornecedoresSheet(workbook);
+  return {
+    rows: rows
+      .filter((r) => !String(r.DELETED_AT || '').trim())
+      .map((r) => ({
+        id: String(r.ID || '').trim(),
+        nome: String(r.NOME || '').trim(),
+        tipo_pagamento_padrao: String(r.TIPO_PAGAMENTO_PADRAO || '').trim()
+      }))
+      .filter((r) => r.nome)
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'))
+  };
+}
+
+function listFiscalSolicitacoesCompra({ username, filters }) {
+  ensureFiscalComprasAccess(username, 'view');
+  const { workbook } = readFiscalComprasDb();
+  const all = readFiscalComprasAggregate(workbook);
+  const f = filters && typeof filters === 'object' ? filters : {};
+  const safe = (v) => String(v || '').trim();
+  const lower = (v) => safe(v).toLowerCase();
+  const filtroIni = safe(f.data_ini || f.dataIni);
+  const filtroFim = safe(f.data_fim || f.dataFim);
+  const filtroSolicitante = lower(f.solicitante);
+  const filtroSetor = lower(f.setor);
+  const filtroNumero = lower(f.numero_requisicao || f.numeroRequisicao);
+  const filtroFornecedor = lower(f.fornecedor);
+  const filtroItem = lower(f.item_descricao || f.itemDescricao);
+  const filtroStatus = String(f.status || '').trim().toUpperCase();
+
+  const historicoIndex = new Map();
+  all
+    .filter((row) => row.status === 'APROVADA')
+    .sort((a, b) => String(b.data_solicitacao).localeCompare(String(a.data_solicitacao)))
+    .forEach((row) => {
+      (row.itens || []).forEach((item) => {
+        const key = normalizeForFilter(item.descricao || '');
+        if (!key || historicoIndex.has(key)) return;
+        const chosen = (item.cotacoes || []).find((c) => c.is_escolhido) || item.cotacoes[0] || null;
+        historicoIndex.set(key, {
+          descricao: String(item.descricao || '').trim(),
+          ultimo_fornecedor: chosen ? String(chosen.fornecedor_nome || '').trim() : '',
+          ultimo_valor_pago: chosen ? Number(chosen.valor_unitario || 0) : 0,
+          data_ultima_compra: String(row.data_solicitacao || '').trim(),
+          ultima_requisicao: String(row.numero_requisicao || '').trim()
+        });
+      });
+    });
+
+  const rows = all
+    .filter((row) => !filtroIni || row.data_solicitacao >= filtroIni)
+    .filter((row) => !filtroFim || row.data_solicitacao <= filtroFim)
+    .filter((row) => !filtroSolicitante || lower(row.solicitado_por).includes(filtroSolicitante))
+    .filter((row) => !filtroSetor || lower(row.setor).includes(filtroSetor))
+    .filter((row) => !filtroNumero || lower(row.numero_requisicao).includes(filtroNumero))
+    .filter((row) => !filtroStatus || row.status === filtroStatus)
+    .filter((row) => !filtroFornecedor || (row.itens || []).some((item) => (item.cotacoes || []).some((cot) => lower(cot.fornecedor_nome).includes(filtroFornecedor))))
+    .filter((row) => !filtroItem || (row.itens || []).some((item) => lower(item.descricao).includes(filtroItem)))
+    .map((row) => ({
+      ...row,
+      historico_itens: (row.itens || []).map((item) => historicoIndex.get(normalizeForFilter(item.descricao || ''))).filter(Boolean)
+    }))
+    .sort((a, b) => String(b.data_solicitacao).localeCompare(String(a.data_solicitacao)) || String(b.numero_requisicao).localeCompare(String(a.numero_requisicao)));
+
+  return { ok: true, rows: rows.slice(0, 1000) };
+}
+
+function updateFiscalSolicitacaoCompraStatus({ username, id, status, aprovacao_obs = null }) {
+  const safeStatus = normalizeCompraStatus(status);
+  const ctx = ensureFiscalComprasAccess(username, 'view');
+  if (!ctx.permissions.edit && !ctx.permissions.approve) {
+    throw new Error('Usuário sem permissão para alterar status da solicitação.');
+  }
+  if (safeStatus === 'APROVADA' && !ctx.permissions.approve) {
+    throw new Error('Usuário sem permissão para aprovar compra.');
+  }
+  if (aprovacao_obs != null && !ctx.permissions.approve) {
+    throw new Error('Usuário sem permissão para registrar observação de aprovação.');
+  }
+  const { workbook, filePath } = readFiscalComprasDb();
+  const { header, rows } = getSolicitacoesCompraSheet(workbook);
+  const safeId = String(id || '').trim();
+  const row = rows.find((r) => !String(r.DELETED_AT || '').trim() && String(r.ID || '').trim() === safeId) || null;
+  if (!row) throw new Error('Solicitação não encontrada.');
+  const before = { ...row };
+  row.STATUS = safeStatus;
+  if (aprovacao_obs != null) {
+    row.APROVACAO_OBS = String(aprovacao_obs || '').trim();
+  }
+  row.ULTIMA_ATUALIZACAO = new Date().toISOString();
+  writeSheetAoa(workbook, 'SOLICITACOES_COMPRA', objectsToAoa(header, rows));
+  appendFiscalComprasLog(workbook, {
+    username: ctx.username,
+    acao: 'SOLICITACAO_COMPRA_STATUS',
+    entidade: 'SOLICITACOES_COMPRA',
+    entidadeId: safeId,
+    detalhes: { before, after: row }
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function deleteFiscalSolicitacaoCompra({ username, id }) {
+  const ctx = ensureFiscalComprasAccess(username, 'delete');
+  const { workbook, filePath } = readFiscalComprasDb();
+  const { header: solicitHeader, rows: solicitRows } = getSolicitacoesCompraSheet(workbook);
+  const { header: itensHeader, rows: itensRows } = getItensSolicitacaoSheet(workbook);
+  const { header: cotHeader, rows: cotRows } = getCotacoesFornecedoresSheet(workbook);
+  const now = new Date().toISOString();
+  const safeId = String(id || '').trim();
+  const target = solicitRows.find((r) => !String(r.DELETED_AT || '').trim() && String(r.ID || '').trim() === safeId) || null;
+  if (!target) throw new Error('Solicitação não encontrada.');
+  const status = normalizeCompraStatus(target.STATUS);
+  if (status === 'APROVADA' && !ctx.isAdmin) {
+    throw new Error('Não é permitido excluir solicitação aprovada, exceto admin.');
+  }
+  target.DELETED_AT = now;
+  target.ULTIMA_ATUALIZACAO = now;
+  const itemIds = itensRows.filter((r) => !String(r.DELETED_AT || '').trim() && String(r.SOLICITACAO_ID || '').trim() === safeId).map((r) => String(r.ID || '').trim());
+  itensRows.forEach((row) => {
+    if (!String(row.DELETED_AT || '').trim() && String(row.SOLICITACAO_ID || '').trim() === safeId) {
+      row.DELETED_AT = now;
+      row.ULTIMA_ATUALIZACAO = now;
+    }
+  });
+  cotRows.forEach((row) => {
+    if (!String(row.DELETED_AT || '').trim() && itemIds.includes(String(row.ITEM_ID || '').trim())) {
+      row.DELETED_AT = now;
+      row.ULTIMA_ATUALIZACAO = now;
+    }
+  });
+  writeSheetAoa(workbook, 'SOLICITACOES_COMPRA', objectsToAoa(solicitHeader, solicitRows));
+  writeSheetAoa(workbook, 'ITENS_SOLICITACAO', objectsToAoa(itensHeader, itensRows));
+  writeSheetAoa(workbook, 'COTACOES_FORNECEDORES', objectsToAoa(cotHeader, cotRows));
+  appendFiscalComprasLog(workbook, {
+    username: ctx.username,
+    acao: 'SOLICITACAO_COMPRA_DELETE',
+    entidade: 'SOLICITACOES_COMPRA',
+    entidadeId: safeId,
+    detalhes: { status }
+  });
+  writeWorkbookFile(workbook, filePath);
+  return { ok: true };
+}
+
+function getFiscalSolicitacaoCompraPdfDir() {
+  const fiscalRoot = getFiscalRoot();
+  const dir = path.join(fiscalRoot, 'PartsSeals', 'Solicitacao de Compras');
+  ensureDirSync(dir);
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+  } catch (error) {
+    throw new Error(`Sem permissão de escrita em: ${dir}`);
+  }
+  return dir;
+}
+
+function getFiscalSolicitacaoCompraPdfPath(numeroRequisicao) {
+  const safe = String(numeroRequisicao || '').trim();
+  if (!safe) {
+    throw new Error('Número da requisição inválido.');
+  }
+  return path.join(getFiscalSolicitacaoCompraPdfDir(), `SOLICITACAO_COMPRA_${safe}.pdf`);
+}
+
+function buildFiscalSolicitacaoCompraPdfHtml(row) {
+  const logoUrl = getPartsSealsLogoDataUrl();
+  const numero = escapeHtml(row.numero_requisicao || '');
+  const dataSolic = escapeHtml(formatYmdToPtBr(row.data_solicitacao || ''));
+  const solicitadoPor = escapeHtml(row.solicitado_por || '');
+  const setor = escapeHtml(row.setor || '');
+  const destinado = escapeHtml(row.destinado_a || '');
+  const observacoes = escapeHtml(row.observacoes || '').replace(/\n/g, '<br />');
+  const printedAt = escapeHtml(new Date().toLocaleString('pt-BR'));
+  const statusRaw = String(row.status || '').trim().toUpperCase();
+  const statusLabel = statusRaw === 'PENDENTE'
+    ? 'Pendente'
+    : statusRaw === 'APROVADA'
+      ? 'Aprovada'
+      : statusRaw === 'CANCELADA'
+        ? 'Cancelada'
+        : escapeHtml(statusRaw || '-');
+  const itemRows = (row.itens || []).map((item) => {
+    const cotCells = [0, 1, 2].map((idx) => {
+      const cot = item.cotacoes && item.cotacoes[idx] ? item.cotacoes[idx] : null;
+      if (!cot) {
+        return '<td>-</td><td>-</td><td>-</td>';
+      }
+      const supplierCls = cot.is_melhor_preco ? 'supplier-cell best-cell' : 'supplier-cell';
+      return `<td class="${supplierCls}">${escapeHtml(cot.fornecedor_nome)}</td><td>${escapeHtml(cot.prazo_entrega)}</td><td>${escapeHtml(Number(cot.subtotal || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }))}</td>`;
+    }).join('');
+    return `<tr><td>${escapeHtml(String(item.quantidade || ''))}</td><td>${escapeHtml(item.unidade || '')}</td><td>${escapeHtml(item.descricao || '')}</td>${cotCells}</tr>`;
+  }).join('');
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>Solicitação de Compras</title>
+  <style>
+    :root{
+      --brand-red:#7b1220;
+      --brand-red-dark:#5f0d17;
+      --ink:#111827;
+      --muted:#4b5563;
+      --line:#d5d9e0;
+      --surface:#f8fafc;
+      --best:#16a34a;
+    }
+    *{box-sizing:border-box;font-family:'Segoe UI',Arial,Helvetica,sans-serif}
+    body{margin:20px;color:var(--ink)}
+    .top{
+      display:grid;
+      grid-template-columns:190px 1fr 190px;
+      align-items:center;
+      gap:10px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:10px 12px;
+      background:linear-gradient(180deg,#fff,var(--surface));
+    }
+    .logo{height:46px;object-fit:contain;justify-self:start}
+    h1{
+      margin:0;
+      text-align:center;
+      letter-spacing:.8px;
+      font-size:19px;
+      color:var(--brand-red-dark);
+    }
+    .req-chip{
+      justify-self:end;
+      border:1px solid #d8c7cb;
+      border-radius:999px;
+      padding:6px 10px;
+      font-size:11px;
+      font-weight:700;
+      color:var(--brand-red-dark);
+      background:#fff;
+    }
+    .meta{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:8px;
+    }
+    .box{
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:8px;
+      font-size:12px;
+      background:#fff;
+      min-height:48px;
+    }
+    .box b{
+      display:block;
+      color:var(--muted);
+      font-size:11px;
+      margin-bottom:3px;
+      text-transform:uppercase;
+      letter-spacing:.3px;
+    }
+    table{
+      width:100%;
+      border-collapse:collapse;
+      margin-top:8px;
+      table-layout:auto;
+    }
+    th,td{
+      border:1px solid var(--line);
+      padding:6px 5px;
+      font-size:10.5px;
+      vertical-align:top;
+      word-break:normal;
+      overflow-wrap:normal;
+    }
+    th{
+      background:linear-gradient(180deg,var(--brand-red),var(--brand-red-dark));
+      color:#fff;
+      text-align:left;
+      font-weight:700;
+      letter-spacing:.2px;
+      white-space:nowrap;
+    }
+    tbody tr:nth-child(even){background:#f8fafc}
+    .supplier-cell{
+      font-weight:600;
+    }
+    .supplier-cell.best-cell{
+      background:#dcfce7;
+      color:#14532d;
+      border-left:3px solid var(--best);
+    }
+    .total{
+      margin-top:10px;
+      font-size:14px;
+      font-weight:800;
+      text-align:right;
+      color:#111827;
+    }
+    .obs-block{
+      margin-top:8px;
+      border:1px solid var(--line);
+      border-left:4px solid var(--brand-red);
+      border-radius:8px;
+      padding:8px 10px;
+      font-size:12px;
+      background:#fff;
+    }
+    .obs-block b{
+      display:block;
+      color:var(--muted);
+      margin-bottom:4px;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.3px;
+    }
+    .sign{
+      margin-top:22px;
+      display:grid;
+      gap:14px;
+    }
+    .line{
+      border-bottom:1px solid #111827;
+      height:24px;
+    }
+    .lbl{
+      font-size:12px;
+      margin-bottom:4px;
+      color:#111827;
+      font-weight:600;
+    }
+  </style>
+  </head><body>
+  <div class="top">
+    <div>${logoUrl ? `<img class="logo" src="${logoUrl}" alt="PartsSeals" />` : ''}</div>
+    <h1>SOLICITAÇÃO DE COMPRAS</h1>
+    <div class="req-chip">${numero || '-'}</div>
+  </div>
+  <div class="meta">
+    <div class="box"><b>Número da Requisição</b>${numero}</div>
+    <div class="box"><b>Data da Solicitação</b>${dataSolic}</div>
+    <div class="box"><b>Status</b>${statusLabel}</div>
+    <div class="box"><b>Setor</b>${setor}</div>
+    <div class="box"><b>Destinado a</b>${destinado}</div>
+    <div class="box"><b>Data/Hora da Impressão</b>${printedAt}</div>
+  </div>
+  <table><thead><tr><th>Qntd</th><th>Unidade</th><th>Descrição</th><th>Fornecedor 1</th><th>Prazo</th><th>Subtotal</th><th>Fornecedor 2</th><th>Prazo</th><th>Subtotal</th><th>Fornecedor 3</th><th>Prazo</th><th>Subtotal</th></tr></thead><tbody>${itemRows}</tbody></table>
+  <div class="total">Total Geral Estimado: ${escapeHtml(Number(row.total_geral_estimado || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }))}</div>
+  <div class="obs-block"><b>Observações</b>${observacoes || '-'}</div>
+  <div class="sign"><div><div class="lbl">Solicitante (${solicitadoPor || '-'})</div><div class="line"></div></div><div><div class="lbl">Compras</div><div class="line"></div></div><div><div class="lbl">Diretoria</div><div class="line"></div></div></div>
+  </body></html>`;
+}
+
+function getFiscalSolicitacaoCompraById(workbook, id) {
+  const all = readFiscalComprasAggregate(workbook);
+  const safeId = String(id || '').trim();
+  return all.find((row) => String(row.id || '').trim() === safeId) || null;
+}
+
+async function generateFiscalSolicitacaoCompraPdf(row) {
+  const outPath = getFiscalSolicitacaoCompraPdfPath(row.numero_requisicao);
+  const html = buildFiscalSolicitacaoCompraPdfHtml(row);
+  const win = new BrowserWindow({
+    show: false,
+    width: 900,
+    height: 1100,
+    webPreferences: { sandbox: true, contextIsolation: true }
+  });
+  try {
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const pdfBuffer = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4', marginsType: 0 });
+    fs.writeFileSync(outPath, pdfBuffer);
+    return outPath;
+  } finally {
+    try { win.close(); } catch (error) { /* ignore */ }
+  }
+}
+
+async function regenFiscalSolicitacaoCompraPdf({ username, id }) {
+  ensureFiscalComprasAccess(username, 'pdf');
+  const { workbook } = readFiscalComprasDb();
+  const row = getFiscalSolicitacaoCompraById(workbook, id);
+  if (!row) throw new Error('Solicitação não encontrada.');
+  const filePath = await generateFiscalSolicitacaoCompraPdf(row);
+  return { ok: true, filePath };
+}
+
+async function openFiscalSolicitacaoCompraPdf({ username, id }) {
+  ensureFiscalComprasAccess(username, 'pdf');
+  const { workbook } = readFiscalComprasDb();
+  const row = getFiscalSolicitacaoCompraById(workbook, id);
+  if (!row) throw new Error('Solicitação não encontrada.');
+  const pdfPath = getFiscalSolicitacaoCompraPdfPath(row.numero_requisicao);
+  if (!fs.existsSync(pdfPath)) throw new Error('PDF não encontrado. Gere novamente.');
+  const opened = await shell.openPath(pdfPath);
+  if (opened) throw new Error(opened);
+  return { ok: true, filePath: pdfPath };
+}
+
 function importRhPontoInterno({ username, date, workbookPath }) {
   const ctx = ensureRhAccess(username, { requireEdit: true });
   const safeDate = String(date || '').trim();
@@ -4060,6 +4992,383 @@ function saveSettings(nextSettings) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8');
   return merged;
+}
+
+function toLocalYmd(dateValue = new Date()) {
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function toBackupStamp(dateValue = new Date()) {
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day}_${hour}-${minute}-${second}`;
+}
+
+function collectBackupSourceFiles() {
+  const files = [];
+  const settingsFile = SETTINGS_FILE();
+  if (settingsFile) {
+    files.push({ label: 'configuracoes', filePath: settingsFile });
+  }
+
+  try {
+    files.push({ label: 'fiscal_compras', filePath: resolveFiscalComprasDbPath() });
+  } catch (error) {
+    // Ignora quando Caminho Fiscal ainda não foi configurado.
+  }
+
+  try {
+    files.push({ label: 'rh', filePath: resolveRhDbPath() });
+  } catch (error) {
+    // Ignora quando Caminho Fiscal ainda não foi configurado.
+  }
+
+  try {
+    files.push({ label: 'banco_pedidos', filePath: resolveFiscalPath(FISCAL_BANK_PEDIDOS_RELATIVE) });
+  } catch (error) {
+    // Ignora quando Caminho Fiscal ainda não foi configurado.
+  }
+
+  try {
+    files.push({ label: 'banco_ordens', filePath: resolveFiscalPath(FISCAL_BANCO_ORDENS_RELATIVE) });
+  } catch (error) {
+    // Ignora quando Caminho Fiscal ainda não foi configurado.
+  }
+
+  const unique = new Map();
+  files.forEach((entry) => {
+    const safePath = String(entry.filePath || '').trim();
+    if (!safePath) {
+      return;
+    }
+    unique.set(safePath, { ...entry, filePath: safePath });
+  });
+  return Array.from(unique.values());
+}
+
+function pruneOldBackups(backupFolder, nowDate = new Date()) {
+  const backupRoot = String(backupFolder || '').trim();
+  if (!backupRoot || !fs.existsSync(backupRoot)) {
+    return { removed: 0 };
+  }
+  const nowMs = nowDate.getTime();
+  const ttlMs = BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  const entries = fs.readdirSync(backupRoot, { withFileTypes: true });
+  entries.forEach((entry) => {
+    const folderPath = path.join(backupRoot, entry.name);
+    let mtimeMs = 0;
+    try {
+      mtimeMs = fs.statSync(folderPath).mtimeMs || 0;
+    } catch (error) {
+      mtimeMs = 0;
+    }
+    if (!mtimeMs || (nowMs - mtimeMs) < ttlMs) {
+      return;
+    }
+    const name = String(entry.name || '');
+    const isOldBackupDir = entry.isDirectory() && name.startsWith('backup_');
+    const isOldDoneFile = entry.isFile() && /^backup_done_\d{4}-\d{2}-\d{2}\.json$/i.test(name);
+    const isOldLockFile = entry.isFile() && /^backup_lock_\d{4}-\d{2}-\d{2}\.lock$/i.test(name);
+    if (!isOldBackupDir && !isOldDoneFile && !isOldLockFile) {
+      return;
+    }
+    try {
+      fs.rmSync(folderPath, { recursive: true, force: true });
+      removed += 1;
+    } catch (error) {
+      // Falha de remoção não bloqueia o fluxo principal.
+    }
+  });
+  return { removed };
+}
+
+function resolveAutoBackupFolder(settings) {
+  const rootFolder = String((settings && settings.rootFolder) || '').trim();
+  if (!rootFolder) {
+    return '';
+  }
+  return path.join(rootFolder, 'Backup');
+}
+
+function listAvailableBackups() {
+  const settings = loadSettings();
+  const backupFolder = resolveAutoBackupFolder(settings);
+  if (!backupFolder || !fs.existsSync(backupFolder)) {
+    return { rows: [] };
+  }
+
+  const rows = fs.readdirSync(backupFolder, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && String(entry.name || '').startsWith('backup_'))
+    .map((entry) => {
+      const folderName = String(entry.name || '');
+      const folderPath = path.join(backupFolder, folderName);
+      const manifestPath = path.join(folderPath, 'manifest.json');
+      let createdAt = '';
+      let copiedCount = 0;
+      try {
+        if (fs.existsSync(manifestPath)) {
+          const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8') || '{}');
+          createdAt = String(parsed.createdAt || '').trim();
+          copiedCount = Array.isArray(parsed.copied) ? parsed.copied.length : 0;
+        }
+      } catch (error) {
+        createdAt = '';
+        copiedCount = 0;
+      }
+      if (!createdAt) {
+        try {
+          createdAt = new Date(fs.statSync(folderPath).mtimeMs || Date.now()).toISOString();
+        } catch (error) {
+          createdAt = '';
+        }
+      }
+      return { folderName, createdAt, copiedCount };
+    })
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+  return { rows };
+}
+
+function getBackupControlPaths(backupFolder, ymd) {
+  const safeYmd = String(ymd || '').trim();
+  return {
+    donePath: path.join(backupFolder, `backup_done_${safeYmd}.json`),
+    lockPath: path.join(backupFolder, `backup_lock_${safeYmd}.lock`)
+  };
+}
+
+function tryAcquireBackupDayLock(lockPath) {
+  try {
+    const fd = fs.openSync(lockPath, 'wx');
+    fs.writeFileSync(fd, JSON.stringify({
+      host: os.hostname(),
+      pid: process.pid,
+      startedAt: new Date().toISOString()
+    }, null, 2), 'utf8');
+    fs.closeSync(fd);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function releaseBackupDayLock(lockPath) {
+  try {
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch (error) {
+    // lock best-effort
+  }
+}
+
+function runBackup({ manual = false, nowDate = new Date() } = {}) {
+  const settings = loadSettings();
+  const backupFolder = resolveAutoBackupFolder(settings);
+  const todayYmd = toLocalYmd(nowDate);
+
+  if (!backupFolder) {
+    if (manual) {
+      throw new Error('Configure a Pasta raiz em Configuração antes de executar o backup.');
+    }
+    return { ok: false, skipped: true, reason: 'root_folder_not_configured' };
+  }
+
+  if (!manual && String(settings.backupLastRunYmd || '').trim() === todayYmd) {
+    return { ok: true, skipped: true, reason: 'already_ran_today' };
+  }
+
+  ensureDirSync(backupFolder);
+  const { donePath, lockPath } = getBackupControlPaths(backupFolder, todayYmd);
+  if (fs.existsSync(donePath) && !manual) {
+    saveSettings({
+      backupLastRunYmd: todayYmd,
+      backupLastRunAtIso: nowDate.toISOString()
+    });
+    return { ok: true, skipped: true, reason: 'already_ran_today_global' };
+  }
+  if (!tryAcquireBackupDayLock(lockPath)) {
+    if (manual) {
+      throw new Error('Backup diário já está em execução em outra máquina.');
+    }
+    return { ok: true, skipped: true, reason: 'backup_in_progress' };
+  }
+
+  const stamp = toBackupStamp(nowDate);
+  const targetFolder = path.join(backupFolder, `backup_${stamp}`);
+  try {
+    ensureDirSync(targetFolder);
+
+    const sources = collectBackupSourceFiles();
+    const copied = [];
+    const missing = [];
+
+    sources.forEach((entry) => {
+      const sourcePath = String(entry.filePath || '').trim();
+      if (!sourcePath) {
+        return;
+      }
+      if (!fs.existsSync(sourcePath)) {
+        missing.push({ label: entry.label, sourcePath });
+        return;
+      }
+      const targetName = path.basename(sourcePath);
+      const targetPath = path.join(targetFolder, targetName);
+      fs.copyFileSync(sourcePath, targetPath);
+      copied.push({ label: entry.label, sourcePath, targetPath });
+    });
+
+    if (!copied.length) {
+      throw new Error('Nenhum arquivo elegível foi encontrado para backup.');
+    }
+
+    const manifestPath = path.join(targetFolder, 'manifest.json');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      createdAt: nowDate.toISOString(),
+      retentionDays: BACKUP_RETENTION_DAYS,
+      copied,
+      missing
+    }, null, 2), 'utf8');
+
+    fs.writeFileSync(donePath, JSON.stringify({
+      date: todayYmd,
+      createdAt: nowDate.toISOString(),
+      folderPath: targetFolder,
+      host: os.hostname()
+    }, null, 2), 'utf8');
+
+    const pruneResult = pruneOldBackups(backupFolder, nowDate);
+    saveSettings({
+      backupLastRunYmd: todayYmd,
+      backupLastRunAtIso: nowDate.toISOString()
+    });
+
+    return {
+      ok: true,
+      folderPath: targetFolder,
+      copiedCount: copied.length,
+      missingCount: missing.length,
+      removedOldCount: Number(pruneResult.removed || 0)
+    };
+  } finally {
+    releaseBackupDayLock(lockPath);
+  }
+}
+
+function restoreBackup({ backupFolderName, adminPasswords }) {
+  const name = String(backupFolderName || '').trim();
+  if (!/^backup_[\d_-]+$/i.test(name)) {
+    throw new Error('Backup inválido.');
+  }
+
+  const passwords = Array.isArray(adminPasswords) ? adminPasswords : [];
+  if (passwords.length !== 3 || passwords.some((pwd) => String(pwd || '') !== ADMIN_SETTINGS_PASSWORD)) {
+    throw new Error('Confirmação inválida. Informe a senha administrativa 3 vezes.');
+  }
+
+  const settings = loadSettings();
+  const backupRoot = resolveAutoBackupFolder(settings);
+  if (!backupRoot) {
+    throw new Error('Configure a Pasta raiz antes de restaurar backup.');
+  }
+
+  const folderPath = path.join(backupRoot, name);
+  if (!fs.existsSync(folderPath)) {
+    throw new Error('Backup selecionado não encontrado.');
+  }
+
+  const manifestPath = path.join(folderPath, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error('Manifesto do backup não encontrado.');
+  }
+
+  let manifest = null;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8') || '{}');
+  } catch (error) {
+    throw new Error('Manifesto do backup inválido.');
+  }
+
+  const copiedEntries = Array.isArray(manifest?.copied) ? manifest.copied : [];
+  if (!copiedEntries.length) {
+    throw new Error('Backup sem arquivos restauráveis.');
+  }
+
+  const restored = [];
+  copiedEntries.forEach((entry) => {
+    const sourcePath = String(entry && entry.sourcePath ? entry.sourcePath : '').trim();
+    if (!sourcePath) {
+      return;
+    }
+    const backupFileName = path.basename(String(entry && entry.targetPath ? entry.targetPath : sourcePath));
+    const backupFilePath = path.join(folderPath, backupFileName);
+    if (!fs.existsSync(backupFilePath)) {
+      return;
+    }
+    ensureDirSync(path.dirname(sourcePath));
+    fs.copyFileSync(backupFilePath, sourcePath);
+    restored.push(sourcePath);
+  });
+
+  if (!restored.length) {
+    throw new Error('Nenhum arquivo do backup pôde ser restaurado.');
+  }
+
+  return {
+    ok: true,
+    restoredCount: restored.length,
+    folderPath
+  };
+}
+
+function runScheduledBackupTick() {
+  const nowDate = new Date();
+  if (Number.isNaN(nowDate.getTime())) {
+    return;
+  }
+  const currentHour = nowDate.getHours();
+  const currentMinute = nowDate.getMinutes();
+  const settings = loadSettings();
+  const backupFolder = resolveAutoBackupFolder(settings);
+  if (!backupFolder) {
+    return;
+  }
+  const alreadyRanToday = String(settings.backupLastRunYmd || '').trim() === toLocalYmd(nowDate);
+  const shouldRunAtExactTime = currentHour === BACKUP_SCHEDULE_HOUR && currentMinute === 0;
+  const shouldRunCatchUp = currentHour > BACKUP_SCHEDULE_HOUR && !alreadyRanToday;
+  if (!shouldRunAtExactTime && !shouldRunCatchUp) {
+    return;
+  }
+  try {
+    runBackup({ manual: false, nowDate });
+  } catch (error) {
+    // Não interrompe o app por falha de backup automático.
+  }
+}
+
+function startBackupScheduler() {
+  if (BACKUP_SCHEDULER_TIMER) {
+    clearInterval(BACKUP_SCHEDULER_TIMER);
+    BACKUP_SCHEDULER_TIMER = null;
+  }
+  runScheduledBackupTick();
+  BACKUP_SCHEDULER_TIMER = setInterval(runScheduledBackupTick, 60 * 1000);
 }
 
 function normalizeTrackingCode(value) {
@@ -7967,6 +9276,21 @@ app.whenReady().then(() => {
     return selected;
   });
 
+  ipcMain.handle('backup:runNow', () => {
+    return runBackup({ manual: true, nowDate: new Date() });
+  });
+
+  ipcMain.handle('backup:list', () => {
+    return listAvailableBackups();
+  });
+
+  ipcMain.handle('backup:restore', (_, payload) => {
+    return restoreBackup({
+      backupFolderName: payload && payload.backupFolderName,
+      adminPasswords: payload && payload.adminPasswords
+    });
+  });
+
   ipcMain.handle('users:list', () => {
     ensureDefaultAdminUser();
     return { users: listUsers() };
@@ -8437,6 +9761,63 @@ app.whenReady().then(() => {
     });
   });
 
+  ipcMain.handle('fiscal:compras:context', (_, payload) => {
+    const ctx = ensureFiscalComprasAccess(String((payload && payload.username) || '').trim(), 'view');
+    return { ok: true, username: ctx.username, permissions: ctx.permissions };
+  });
+
+  ipcMain.handle('fiscal:compras:fornecedores:list', (_, payload) => {
+    return listFiscalFornecedores({
+      username: String((payload && payload.username) || '').trim()
+    });
+  });
+
+  ipcMain.handle('fiscal:compras:upsert', (_, payload) => {
+    return upsertFiscalSolicitacaoCompra({
+      ...(payload || {}),
+      username: String((payload && payload.username) || '').trim()
+    });
+  });
+
+  ipcMain.handle('fiscal:compras:list', (_, payload) => {
+    return listFiscalSolicitacoesCompra({
+      username: String((payload && payload.username) || '').trim(),
+      filters: payload && payload.filters ? payload.filters : (payload || {})
+    });
+  });
+
+  ipcMain.handle('fiscal:compras:status:update', (_, payload) => {
+    return updateFiscalSolicitacaoCompraStatus({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim(),
+      status: String((payload && payload.status) || '').trim(),
+      aprovacao_obs: payload && Object.prototype.hasOwnProperty.call(payload, 'aprovacao_obs')
+        ? String(payload.aprovacao_obs || '').trim()
+        : null
+    });
+  });
+
+  ipcMain.handle('fiscal:compras:delete', (_, payload) => {
+    return deleteFiscalSolicitacaoCompra({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('fiscal:compras:pdf:regen', async (_, payload) => {
+    return regenFiscalSolicitacaoCompraPdf({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
+  ipcMain.handle('fiscal:compras:pdf:open', async (_, payload) => {
+    return openFiscalSolicitacaoCompraPdf({
+      username: String((payload && payload.username) || '').trim(),
+      id: String((payload && payload.id) || '').trim()
+    });
+  });
+
   ipcMain.handle('fiscal:list-nfs', () => {
     const list = listNfsFromBancoPedidos();
     return { nfs: list };
@@ -8580,6 +9961,7 @@ app.whenReady().then(() => {
     };
   });
 
+  startBackupScheduler();
   createWindow();
 
   app.on('activate', () => {

@@ -33,7 +33,8 @@
       </header>
 
       <nav class="tabs" aria-label="Abas principais">
-        <button id="tab-main" class="tab active" data-tab="main" type="button">Listagem</button>
+        <button id="tab-menu" class="tab active" data-tab="menu" type="button">Menu</button>
+        <button id="tab-main" class="tab" data-tab="main" type="button">Listagem</button>
         <button id="tab-pcp" class="tab" data-tab="pcp" type="button">PCP</button>
         <button id="tab-fiscal" class="tab" data-tab="fiscal" type="button">FISCAL</button>
         <button id="tab-rh" class="tab" data-tab="rh" type="button">RH</button>
@@ -42,7 +43,102 @@
       </nav>
 
       <main class="content">
-        <section id="panel-main" class="panel active">
+        <section id="panel-menu" class="panel active">
+          <div class="card menu-hero-card">
+            <div class="menu-hero-copy">
+              <h2>Painel de Navegação</h2>
+              <p>Selecione a área de trabalho para continuar.</p>
+            </div>
+          </div>
+          <div class="menu-grid">
+            <button id="menu-open-main" class="menu-area-card" type="button" data-shortcut="1">
+              <span class="menu-shortcut" aria-hidden="true">1</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-main" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M4 5h16v4H4zM4 11h16v4H4zM4 17h10v2H4z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>Listagem</strong>
+                  <small>Produção diária</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Carregamento de planilhas, filtros e visão de KPIs.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-pcp" class="menu-area-card" type="button" data-shortcut="2">
+              <span class="menu-shortcut" aria-hidden="true">2</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-pcp" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M4 18h3v-6H4zm6 0h3V8h-3zm6 0h3V4h-3z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>PCP</strong>
+                  <small>Controle fabril</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Acompanhamento, eficiência e dashboards operacionais.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-fiscal" class="menu-area-card" type="button" data-shortcut="3">
+              <span class="menu-shortcut" aria-hidden="true">3</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-fiscal" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M6 3h9l3 3v15H6zm8 1v3h3"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>Fiscal</strong>
+                  <small>Notas e compras</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">NFs, pendências e Solicitação de Compras.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-rh" class="menu-area-card" type="button" data-shortcut="4">
+              <span class="menu-shortcut" aria-hidden="true">4</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-rh" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-7 9a7 7 0 0 1 14 0z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>RH</strong>
+                  <small>Pessoas e jornada</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Horas extras, atrasos, solicitações e indicadores.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-settings" class="menu-area-card" type="button" data-shortcut="5">
+              <span class="menu-shortcut" aria-hidden="true">5</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-settings" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M12 8a4 4 0 1 0 4 4 4 4 0 0 0-4-4zm9 4-2.1.7a7.6 7.6 0 0 1-.4 1l1.2 1.9-1.8 1.8-1.9-1.2a7.6 7.6 0 0 1-1 .4L12 21l-1-.1-.7-2.1a7.6 7.6 0 0 1-1-.4l-1.9 1.2-1.8-1.8 1.2-1.9a7.6 7.6 0 0 1-.4-1L3 12l.1-1 .1-1 .2-.7 2.1-.7a7.6 7.6 0 0 1 .4-1L4.7 5.7 6.5 3.9l1.9 1.2a7.6 7.6 0 0 1 1-.4L10.1 3 12 2.9l1 .1.7 2.1a7.6 7.6 0 0 1 1 .4l1.9-1.2 1.8 1.8-1.2 1.9a7.6 7.6 0 0 1 .4 1L21 11z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>Configuração</strong>
+                  <small>Parâmetros do sistema</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Pasta raiz, caminho fiscal, logins e permissões.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-log" class="menu-area-card" type="button" data-shortcut="6">
+              <span class="menu-shortcut" aria-hidden="true">6</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-log" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M12 6v6l4 2M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>LOG Atualizações</strong>
+                  <small>Evolução do sistema</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Histórico completo de versões e melhorias.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+          </div>
+        </section>
+
+        <section id="panel-main" class="panel">
           <div class="card filter-card">
             <div class="field f-col">
               <label for="date-input">Data</label>
@@ -135,25 +231,35 @@
 
         <section id="panel-settings" class="panel">
           <div class="card form-card">
-            <div class="field">
+            <div class="field settings-main-field">
               <label for="root-folder-input">Pasta raiz</label>
               <div class="inline">
                 <input id="root-folder-input" type="text" readonly />
                 <button id="btn-select-folder" class="btn secondary" type="button">Selecionar</button>
               </div>
             </div>
-            <div class="field">
+            <div class="field settings-main-field">
               <label for="fiscal-root-input">Caminho Fiscal (R:)</label>
               <div class="inline">
                 <input id="fiscal-root-input" type="text" readonly placeholder="Selecione a raiz (ex: R:\\)" />
                 <button id="btn-select-fiscal-root" class="btn secondary" type="button">Selecionar</button>
               </div>
             </div>
-            <div class="field">
+            <div class="field settings-main-field">
               <label for="tracking-api-key-input">Chave API Rastreio (SeuRastreio)</label>
               <input id="tracking-api-key-input" type="password" placeholder="Cole sua chave (ex: sr_live_...)" />
             </div>
-            <div class="actions">
+            <div class="field settings-main-field settings-backup-field">
+              <label>Backup automático</label>
+              <div class="settings-backup-pill">Ativo via Pasta raiz (subpasta Backup)</div>
+              <p class="field-note settings-backup-note">Backup automático diário às 08:00, com retenção máxima de 15 dias.</p>
+            </div>
+            <div class="actions settings-main-actions">
+              <button id="btn-run-backup-now" class="btn backup-now-btn" type="button">
+                <span class="backup-now-icon" aria-hidden="true">⟳</span>
+                <span class="backup-now-label">Executar backup agora</span>
+              </button>
+              <button id="btn-restore-backup" class="btn backup-restore-btn" type="button">Usar backup</button>
               <button id="btn-save-settings" class="btn primary" type="button">Salvar configuração</button>
             </div>
           </div>
@@ -192,6 +298,10 @@
                   <strong>NFs</strong>
                   <span>Listagem, detalhes, pendências, histórico e rastreio.</span>
                 </button>
+                <button id="fiscal-open-compras" class="pcp-tool-btn" type="button">
+                  <strong>Solicitação de Compras</strong>
+                  <span>Cotação de até 3 fornecedores por item, com comparação e PDF.</span>
+                </button>
               </div>
             </div>
 
@@ -229,6 +339,147 @@
                   <thead id="fiscal-table-head"></thead>
                   <tbody id="fiscal-table-body"></tbody>
                 </table>
+              </div>
+            </div>
+
+            <div id="fiscal-compras-view" hidden>
+              <div class="log-header">
+                <h2>FISCAL - Solicitação de Compras</h2>
+                <p id="fiscal-compras-subtitle">Cotação interna com comparativo de até 3 fornecedores por item.</p>
+              </div>
+              <div class="pcp-top-actions pcp-eff-toolbar">
+                <button id="fiscal-compras-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="fiscal-compras-refresh" class="btn primary" type="button">Atualizar</button>
+                <button id="fiscal-compras-new" class="btn secondary" type="button">Nova solicitação</button>
+              </div>
+
+              <div class="rh-subtabs" role="tablist" aria-label="Solicitações de compra">
+                <button id="fiscal-compras-tab-form" class="rh-subtab active" type="button">Solicitar</button>
+                <button id="fiscal-compras-tab-consulta" class="rh-subtab" type="button">Consultar</button>
+              </div>
+
+              <div id="fiscal-compras-view-form" class="rh-view">
+                <div class="card form-card">
+                  <input id="fiscal-compras-id" type="hidden" />
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-numero">Número da requisição</label>
+                      <input id="fiscal-compras-numero" type="text" readonly placeholder="Gerado ao salvar" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-data-solic">Data da solicitação</label>
+                      <input id="fiscal-compras-data-solic" type="date" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-solicitado-por">Solicitado por</label>
+                      <input id="fiscal-compras-solicitado-por" type="text" readonly />
+                    </div>
+                  </div>
+
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-setor">Setor</label>
+                      <input id="fiscal-compras-setor" type="text" placeholder="Ex: Usinagem" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-destinado">Destinado a</label>
+                      <input id="fiscal-compras-destinado" type="text" placeholder="Ex: Compras / Diretoria" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-status">Status</label>
+                      <select id="fiscal-compras-status">
+                        <option value="PENDENTE">Pendente</option>
+                        <option value="APROVADA">Aprovada</option>
+                        <option value="CANCELADA">Cancelada</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="inline" style="justify-content: space-between; align-items: center;">
+                    <h3 style="margin: 0;">Itens da solicitação</h3>
+                    <button id="fiscal-compras-add-item" class="btn secondary" type="button">Adicionar item</button>
+                  </div>
+                  <div id="fiscal-compras-items-wrap"></div>
+                  <datalist id="fiscal-compras-fornecedor-list"></datalist>
+                  <datalist id="fiscal-compras-pagamento-list"></datalist>
+
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-total-estimado">Total geral estimado</label>
+                      <input id="fiscal-compras-total-estimado" type="text" readonly />
+                    </div>
+                  </div>
+
+                  <div class="field fiscal-compras-observacoes-field">
+                    <label for="fiscal-compras-observacoes">Observações</label>
+                    <textarea id="fiscal-compras-observacoes" rows="3" placeholder="Informações complementares"></textarea>
+                  </div>
+
+                  <p id="fiscal-compras-error" class="pcp-modal-error"></p>
+                  <div class="inline">
+                    <button id="fiscal-compras-cancel" class="btn secondary" type="button">Limpar</button>
+                    <button id="fiscal-compras-save" class="btn primary" type="button">Salvar</button>
+                    <button id="fiscal-compras-save-pdf" class="btn secondary" type="button">Salvar e gerar PDF</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="fiscal-compras-view-consulta" class="rh-view" hidden>
+                <div class="card form-card fiscal-compras-consulta-filters">
+                  <div class="fiscal-compras-consulta-row">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-ini">Período de</label>
+                      <input id="fiscal-compras-filter-ini" type="date" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-fim">Até</label>
+                      <input id="fiscal-compras-filter-fim" type="date" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-solicitante">Solicitante</label>
+                      <input id="fiscal-compras-filter-solicitante" type="text" placeholder="Ex: JOAO" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-setor">Setor</label>
+                      <input id="fiscal-compras-filter-setor" type="text" placeholder="Ex: Usinagem" />
+                    </div>
+                  </div>
+                  <div class="fiscal-compras-consulta-row">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-numero">Número da requisição</label>
+                      <input id="fiscal-compras-filter-numero" type="text" placeholder="Ex: SC-2026-0001" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-fornecedor">Fornecedor</label>
+                      <input id="fiscal-compras-filter-fornecedor" type="text" placeholder="Ex: Metal Sul" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-item">Item (descrição)</label>
+                      <input id="fiscal-compras-filter-item" type="text" placeholder="Ex: Bucha bronze" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-status">Status</label>
+                      <select id="fiscal-compras-filter-status">
+                        <option value="">Todos</option>
+                        <option value="PENDENTE">Pendente</option>
+                        <option value="APROVADA">Aprovada</option>
+                        <option value="CANCELADA">Cancelada</option>
+                      </select>
+                    </div>
+                    <div class="fiscal-compras-filter-actions">
+                      <button id="fiscal-compras-filter-clear" class="btn secondary" type="button">Limpar</button>
+                      <button id="fiscal-compras-filter-apply" class="btn primary" type="button">Aplicar</button>
+                    </div>
+                  </div>
+                </div>
+                <p id="fiscal-compras-consulta-error" class="pcp-modal-error"></p>
+                <p id="fiscal-compras-consulta-empty" class="pcp-empty-state" hidden>Nenhuma solicitação encontrada.</p>
+                <div class="table-wrapper pcp-table-wrapper">
+                  <table id="fiscal-compras-table" class="pcp-table">
+                    <thead id="fiscal-compras-table-head"></thead>
+                    <tbody id="fiscal-compras-table-body"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -578,6 +829,7 @@
       <footer class="app-footer">
         <p class="footer-main">Sistema Interno - Parts Seals 2026</p>
         <p class="footer-sub">Desenvolvido por KuruJoos</p>
+        <p id="footer-version" class="footer-version">Versão: - | Atualizado em: -</p>
         <img class="footer-logo" src="../../img/KurujJoss Logo.png" alt="KuruJoss" />
       </footer>
     </div>
@@ -945,6 +1197,35 @@
         <div class="pcp-modal-actions">
           <button id="admin-settings-cancel" class="btn secondary" type="button">Cancelar</button>
           <button id="admin-settings-confirm" class="btn primary" type="button">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="backup-restore-modal" class="pcp-modal" hidden>
+      <div id="backup-restore-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="backup-restore-title">
+        <h3 id="backup-restore-title">Restaurar Backup</h3>
+        <p>Selecione o backup e confirme a senha administrativa 3 vezes para restaurar os arquivos.</p>
+        <div class="field">
+          <label for="backup-restore-select">Backup disponível</label>
+          <select id="backup-restore-select"></select>
+        </div>
+        <div class="field">
+          <label for="backup-restore-pass1">Senha admin (1/3)</label>
+          <input id="backup-restore-pass1" type="password" placeholder="Digite a senha administrativa" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="backup-restore-pass2">Senha admin (2/3)</label>
+          <input id="backup-restore-pass2" type="password" placeholder="Digite a senha administrativa" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="backup-restore-pass3">Senha admin (3/3)</label>
+          <input id="backup-restore-pass3" type="password" placeholder="Digite a senha administrativa" autocomplete="new-password" />
+        </div>
+        <p id="backup-restore-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="backup-restore-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="backup-restore-confirm" class="btn danger" type="button">Restaurar backup</button>
         </div>
       </div>
     </div>

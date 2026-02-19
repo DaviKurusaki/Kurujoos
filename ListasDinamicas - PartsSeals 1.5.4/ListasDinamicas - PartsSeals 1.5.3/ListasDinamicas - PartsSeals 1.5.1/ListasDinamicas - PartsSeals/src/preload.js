@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('api', {
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   selectRootFolder: () => ipcRenderer.invoke('settings:selectRootFolder'),
   selectFiscalRootFolder: () => ipcRenderer.invoke('settings:selectFiscalRootFolder'),
+  runBackupNow: () => ipcRenderer.invoke('backup:runNow'),
+  backupList: () => ipcRenderer.invoke('backup:list'),
+  backupRestore: (payload) => ipcRenderer.invoke('backup:restore', payload),
   listUsers: () => ipcRenderer.invoke('users:list'),
   createUser: (payload) => ipcRenderer.invoke('users:create', payload),
   updateUser: (payload) => ipcRenderer.invoke('users:update', payload),
@@ -59,5 +62,13 @@ contextBridge.exposeInMainWorld('api', {
   fiscalDeleteNf: (payload) => ipcRenderer.invoke('fiscal:delete-nf', payload),
   fiscalHistory: () => ipcRenderer.invoke('fiscal:history'),
   fiscalFindNf: (payload) => ipcRenderer.invoke('fiscal:find-nf', payload),
-  fiscalTrackingLookup: (payload) => ipcRenderer.invoke('fiscal:tracking:lookup', payload)
+  fiscalTrackingLookup: (payload) => ipcRenderer.invoke('fiscal:tracking:lookup', payload),
+  fiscalComprasContext: (payload) => ipcRenderer.invoke('fiscal:compras:context', payload),
+  fiscalComprasFornecedoresList: (payload) => ipcRenderer.invoke('fiscal:compras:fornecedores:list', payload),
+  fiscalComprasUpsert: (payload) => ipcRenderer.invoke('fiscal:compras:upsert', payload),
+  fiscalComprasList: (payload) => ipcRenderer.invoke('fiscal:compras:list', payload),
+  fiscalComprasDelete: (payload) => ipcRenderer.invoke('fiscal:compras:delete', payload),
+  fiscalComprasUpdateStatus: (payload) => ipcRenderer.invoke('fiscal:compras:status:update', payload),
+  fiscalComprasPdfRegen: (payload) => ipcRenderer.invoke('fiscal:compras:pdf:regen', payload),
+  fiscalComprasPdfOpen: (payload) => ipcRenderer.invoke('fiscal:compras:pdf:open', payload)
 });
