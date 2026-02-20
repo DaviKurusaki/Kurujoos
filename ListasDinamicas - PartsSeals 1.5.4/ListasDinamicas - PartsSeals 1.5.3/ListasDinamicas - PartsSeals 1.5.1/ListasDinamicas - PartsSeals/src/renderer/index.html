@@ -1,0 +1,1239 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KuruJoos - Gestão Unificada</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-theme="light">
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Gestão Unificada</h1>
+          <p>Parts Seals</p>
+        </div>
+        <div class="topbar-right">
+          <img
+            id="brand-logo"
+            class="brand-logo"
+            src="../../img/LogoParts.png"
+            data-logo-light="../../img/LogoParts.png"
+            data-logo-dark="../../img/LogoPartsDark.png"
+            alt="Logo Parts Seals"
+          />
+          <div class="theme-switch-wrap">
+            <span>Tema escuro</span>
+            <label class="switch-control" for="theme-switch">
+              <input id="theme-switch" type="checkbox" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Abas principais">
+        <button id="tab-menu" class="tab active" data-tab="menu" type="button">Menu</button>
+        <button id="tab-main" class="tab" data-tab="main" type="button">Listagem</button>
+        <button id="tab-pcp" class="tab" data-tab="pcp" type="button">PCP</button>
+        <button id="tab-fiscal" class="tab" data-tab="fiscal" type="button">FISCAL</button>
+        <button id="tab-rh" class="tab" data-tab="rh" type="button">RH</button>
+        <button id="tab-settings" class="tab" data-tab="settings" type="button">Configuração</button>
+        <button id="tab-log" class="tab" data-tab="log" type="button">LOG Atualizações</button>
+      </nav>
+
+      <main class="content">
+        <section id="panel-menu" class="panel active">
+          <div class="card menu-hero-card">
+            <div class="menu-hero-copy">
+              <h2>Painel de Navegação</h2>
+              <p>Selecione a área de trabalho para continuar.</p>
+            </div>
+          </div>
+          <div class="menu-grid">
+            <button id="menu-open-main" class="menu-area-card" type="button" data-shortcut="1">
+              <span class="menu-shortcut" aria-hidden="true">1</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-main" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M4 5h16v4H4zM4 11h16v4H4zM4 17h10v2H4z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>Listagem</strong>
+                  <small>Produção diária</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Carregamento de planilhas, filtros e visão de KPIs.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-pcp" class="menu-area-card" type="button" data-shortcut="2">
+              <span class="menu-shortcut" aria-hidden="true">2</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-pcp" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M4 18h3v-6H4zm6 0h3V8h-3zm6 0h3V4h-3z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>PCP</strong>
+                  <small>Controle fabril</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Acompanhamento, eficiência e dashboards operacionais.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-fiscal" class="menu-area-card" type="button" data-shortcut="3">
+              <span class="menu-shortcut" aria-hidden="true">3</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-fiscal" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M6 3h9l3 3v15H6zm8 1v3h3"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>Fiscal</strong>
+                  <small>Notas e compras</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">NFs, pendências e Solicitação de Compras.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-rh" class="menu-area-card" type="button" data-shortcut="4">
+              <span class="menu-shortcut" aria-hidden="true">4</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-rh" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-7 9a7 7 0 0 1 14 0z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>RH</strong>
+                  <small>Pessoas e jornada</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Horas extras, atrasos, solicitações e indicadores.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-settings" class="menu-area-card" type="button" data-shortcut="5">
+              <span class="menu-shortcut" aria-hidden="true">5</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-settings" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M12 8a4 4 0 1 0 4 4 4 4 0 0 0-4-4zm9 4-2.1.7a7.6 7.6 0 0 1-.4 1l1.2 1.9-1.8 1.8-1.9-1.2a7.6 7.6 0 0 1-1 .4L12 21l-1-.1-.7-2.1a7.6 7.6 0 0 1-1-.4l-1.9 1.2-1.8-1.8 1.2-1.9a7.6 7.6 0 0 1-.4-1L3 12l.1-1 .1-1 .2-.7 2.1-.7a7.6 7.6 0 0 1 .4-1L4.7 5.7 6.5 3.9l1.9 1.2a7.6 7.6 0 0 1 1-.4L10.1 3 12 2.9l1 .1.7 2.1a7.6 7.6 0 0 1 1 .4l1.9-1.2 1.8 1.8-1.2 1.9a7.6 7.6 0 0 1 .4 1L21 11z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>Configuração</strong>
+                  <small>Parâmetros do sistema</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Pasta raiz, caminho fiscal, logins e permissões.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+            <button id="menu-open-log" class="menu-area-card" type="button" data-shortcut="6">
+              <span class="menu-shortcut" aria-hidden="true">6</span>
+              <span class="menu-area-top">
+                <span class="menu-area-icon menu-icon-log" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M12 6v6l4 2M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/></svg>
+                </span>
+                <span class="menu-area-title-wrap">
+                  <strong>LOG Atualizações</strong>
+                  <small>Evolução do sistema</small>
+                </span>
+              </span>
+              <span class="menu-area-desc">Histórico completo de versões e melhorias.</span>
+              <span class="menu-area-cta">Abrir área</span>
+            </button>
+          </div>
+        </section>
+
+        <section id="panel-main" class="panel">
+          <div class="card filter-card">
+            <div class="field f-col">
+              <label for="date-input">Data</label>
+              <input id="date-input" type="date" />
+            </div>
+            <div class="field f-val">
+              <label for="list-type-select">Listagem</label>
+              <select id="list-type-select">
+                <option value="acabamento">ACABAMENTO</option>
+                <option value="projeto">PROJETO</option>
+                <option value="fagor1">FAGOR 1</option>
+                <option value="fagor2">FAGOR 2</option>
+                <option value="mcs1">MCS 1</option>
+                <option value="mcs2">MCS 2</option>
+                <option value="mcs3">MCS 3</option>
+                <option value="moldagem">MOLDAGEM</option>
+                <option value="mestra">MESTRA</option>
+              </select>
+            </div>
+            <div class="actions f-apply">
+              <button id="btn-load" class="btn primary" type="button">Carregar tabela</button>
+            </div>
+          </div>
+
+          <div class="card advanced-filter-card">
+            <div class="field af-col">
+              <label for="filter-column-select">Filtrar coluna</label>
+              <select id="filter-column-select">
+                <option value="">Selecione uma coluna</option>
+              </select>
+            </div>
+            <div class="field af-val">
+              <label for="filter-value-input">Valor</label>
+              <input id="filter-value-input" type="text" placeholder="Digite o valor para filtrar" />
+            </div>
+            <div class="actions af-apply">
+              <button id="btn-apply-filter" class="btn primary" type="button">Filtrar</button>
+            </div>
+            <div class="actions af-clear">
+              <button id="btn-clear-filter" class="btn secondary" type="button">Limpar</button>
+            </div>
+            <div class="field switch-field f-switch">
+              <label for="filter-bucha-not-empty">Ordens de moldagem</label>
+              <label class="switch-control switch-sm" for="filter-bucha-not-empty">
+                <input id="filter-bucha-not-empty" type="checkbox" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="field switch-field f-project-missing">
+              <label for="filter-project-missing">Ordens faltantes</label>
+              <label class="switch-control switch-sm" for="filter-project-missing">
+                <input id="filter-project-missing" type="checkbox" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="field switch-field f-acabamento-critical">
+              <label for="filter-acabamento-critical">Ordens críticas</label>
+              <label class="switch-control switch-sm" for="filter-acabamento-critical">
+                <input id="filter-acabamento-critical" type="checkbox" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="field switch-field f-dynamic-btn">
+              <label for="dynamic-eff-switch">Eficiência dinâmica</label>
+              <label class="switch-control switch-sm" for="dynamic-eff-switch">
+                <input id="dynamic-eff-switch" type="checkbox" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="field f-dynamic-hour">
+              <label for="dynamic-hour-input">Hora (opcional)</label>
+              <input id="dynamic-hour-input" type="number" min="0" max="23" placeholder="Ex: 11" />
+            </div>
+          </div>
+
+          <section id="kpi-section" class="kpi-section"></section>
+
+          <div class="card">
+            <div class="meta">
+              <p id="result-path">Nenhum arquivo carregado.</p>
+            </div>
+            <div class="table-wrapper">
+              <table id="result-table">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-settings" class="panel">
+          <div class="card form-card">
+            <div class="field settings-main-field">
+              <label for="root-folder-input">Pasta raiz</label>
+              <div class="inline">
+                <input id="root-folder-input" type="text" readonly />
+                <button id="btn-select-folder" class="btn secondary" type="button">Selecionar</button>
+              </div>
+            </div>
+            <div class="field settings-main-field">
+              <label for="fiscal-root-input">Caminho Fiscal (R:)</label>
+              <div class="inline">
+                <input id="fiscal-root-input" type="text" readonly placeholder="Selecione a raiz (ex: R:\\)" />
+                <button id="btn-select-fiscal-root" class="btn secondary" type="button">Selecionar</button>
+              </div>
+            </div>
+            <div class="field settings-main-field">
+              <label for="tracking-api-key-input">Chave API Rastreio (SeuRastreio)</label>
+              <input id="tracking-api-key-input" type="password" placeholder="Cole sua chave (ex: sr_live_...)" />
+            </div>
+            <div class="field settings-main-field settings-backup-field">
+              <label>Backup automático</label>
+              <div class="settings-backup-pill">Ativo via Pasta raiz (subpasta Backup)</div>
+              <p class="field-note settings-backup-note">Backup automático diário às 08:00, com retenção máxima de 15 dias.</p>
+            </div>
+            <div class="actions settings-main-actions">
+              <button id="btn-run-backup-now" class="btn backup-now-btn" type="button">
+                <span class="backup-now-icon" aria-hidden="true">⟳</span>
+                <span class="backup-now-label">Executar backup agora</span>
+              </button>
+              <button id="btn-restore-backup" class="btn backup-restore-btn" type="button">Usar backup</button>
+              <button id="btn-save-settings" class="btn primary" type="button">Salvar configuração</button>
+            </div>
+          </div>
+          <div class="card settings-logins-card">
+            <div class="settings-logins-head">
+              <div class="log-header">
+                <h2>Logins</h2>
+                <p>Cadastre usuários e permissões de acesso.</p>
+              </div>
+              <button id="btn-unlock-logins" class="btn secondary" type="button">Desbloquear Logins</button>
+            </div>
+            <p id="logins-locked-note" class="logins-locked-note">Seção oculta por segurança. Informe a senha administrativa para exibir.</p>
+            <div id="logins-admin-section" hidden>
+              <div class="pcp-top-actions">
+                <button id="btn-user-add" class="btn primary" type="button">Adicionar login</button>
+              </div>
+              <p id="users-empty" class="pcp-empty-state">Nenhum usuário cadastrado.</p>
+              <div class="table-wrapper">
+                <table id="users-table">
+                  <thead id="users-table-head"></thead>
+                  <tbody id="users-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="panel-fiscal" class="panel">
+          <div class="card">
+            <div id="fiscal-menu-view">
+              <div class="log-header">
+                <h2>FISCAL</h2>
+                <p>Selecione uma ferramenta para abrir.</p>
+              </div>
+              <div class="pcp-tool-grid">
+                <button id="fiscal-open-nfs" class="pcp-tool-btn" type="button">
+                  <strong>NFs</strong>
+                  <span>Listagem, detalhes, pendências, histórico e rastreio.</span>
+                </button>
+                <button id="fiscal-open-compras" class="pcp-tool-btn" type="button">
+                  <strong>Solicitação de Compras</strong>
+                  <span>Cotação de até 3 fornecedores por item, com comparação e PDF.</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="fiscal-nfs-view" hidden>
+              <div class="log-header">
+                <h2>FISCAL</h2>
+                <p id="fiscal-subtitle">Cadastro de NF e controle do banco de pedidos.</p>
+              </div>
+              <div class="pcp-top-actions">
+                <button id="fiscal-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="fiscal-btn-cadastrar-nf" class="btn primary" type="button">Cadastrar NF</button>
+                <button id="fiscal-btn-pesquisar-nf" class="btn secondary" type="button">Pesquisar NF</button>
+                <button id="fiscal-btn-pendencias" class="btn secondary" type="button">Pendências</button>
+                <button id="fiscal-btn-historico" class="btn secondary" type="button">Histórico</button>
+                <button id="fiscal-btn-voltar" class="btn secondary" type="button" hidden>Voltar</button>
+                <button id="fiscal-btn-editar-nf" class="btn secondary" type="button" hidden>Editar NF</button>
+                <button id="fiscal-btn-apagar-nf" class="btn secondary" type="button" hidden>Apagar NF</button>
+              </div>
+
+              <div class="fiscal-tracking-box">
+                <div class="field">
+                  <label for="fiscal-tracking-code">Rastreio SEDEX</label>
+                  <div class="inline">
+                    <input id="fiscal-tracking-code" type="text" placeholder="Ex: AA123456789BR" />
+                    <button id="fiscal-tracking-check" class="btn secondary" type="button">Consultar</button>
+                  </div>
+                  <p id="fiscal-tracking-result" class="field-note">Informe um código de rastreio para consultar.</p>
+                </div>
+              </div>
+
+              <p id="fiscal-empty-state" class="pcp-empty-state">Clique em Cadastrar NF para iniciar.</p>
+              <div id="fiscal-breadcrumb" class="pcp-breadcrumb"></div>
+              <div class="table-wrapper pcp-table-wrapper">
+                <table id="fiscal-table" class="pcp-table">
+                  <thead id="fiscal-table-head"></thead>
+                  <tbody id="fiscal-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div id="fiscal-compras-view" hidden>
+              <div class="log-header">
+                <h2>FISCAL - Solicitação de Compras</h2>
+                <p id="fiscal-compras-subtitle">Cotação interna com comparativo de até 3 fornecedores por item.</p>
+              </div>
+              <div class="pcp-top-actions pcp-eff-toolbar">
+                <button id="fiscal-compras-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="fiscal-compras-refresh" class="btn primary" type="button">Atualizar</button>
+                <button id="fiscal-compras-new" class="btn secondary" type="button">Nova solicitação</button>
+              </div>
+
+              <div class="rh-subtabs" role="tablist" aria-label="Solicitações de compra">
+                <button id="fiscal-compras-tab-form" class="rh-subtab active" type="button">Solicitar</button>
+                <button id="fiscal-compras-tab-consulta" class="rh-subtab" type="button">Consultar</button>
+              </div>
+
+              <div id="fiscal-compras-view-form" class="rh-view">
+                <div class="card form-card">
+                  <input id="fiscal-compras-id" type="hidden" />
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-numero">Número da requisição</label>
+                      <input id="fiscal-compras-numero" type="text" readonly placeholder="Gerado ao salvar" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-data-solic">Data da solicitação</label>
+                      <input id="fiscal-compras-data-solic" type="date" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-solicitado-por">Solicitado por</label>
+                      <input id="fiscal-compras-solicitado-por" type="text" readonly />
+                    </div>
+                  </div>
+
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-setor">Setor</label>
+                      <input id="fiscal-compras-setor" type="text" placeholder="Ex: Usinagem" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-destinado">Destinado a</label>
+                      <input id="fiscal-compras-destinado" type="text" placeholder="Ex: Compras / Diretoria" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-status">Status</label>
+                      <select id="fiscal-compras-status">
+                        <option value="PENDENTE">Pendente</option>
+                        <option value="APROVADA">Aprovada</option>
+                        <option value="CANCELADA">Cancelada</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="inline" style="justify-content: space-between; align-items: center;">
+                    <h3 style="margin: 0;">Itens da solicitação</h3>
+                    <button id="fiscal-compras-add-item" class="btn secondary" type="button">Adicionar item</button>
+                  </div>
+                  <div id="fiscal-compras-items-wrap"></div>
+                  <datalist id="fiscal-compras-fornecedor-list"></datalist>
+                  <datalist id="fiscal-compras-pagamento-list"></datalist>
+
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-total-estimado">Total geral estimado</label>
+                      <input id="fiscal-compras-total-estimado" type="text" readonly />
+                    </div>
+                  </div>
+
+                  <div class="field fiscal-compras-observacoes-field">
+                    <label for="fiscal-compras-observacoes">Observações</label>
+                    <textarea id="fiscal-compras-observacoes" rows="3" placeholder="Informações complementares"></textarea>
+                  </div>
+
+                  <p id="fiscal-compras-error" class="pcp-modal-error"></p>
+                  <div class="inline">
+                    <button id="fiscal-compras-cancel" class="btn secondary" type="button">Limpar</button>
+                    <button id="fiscal-compras-save" class="btn primary" type="button">Salvar</button>
+                    <button id="fiscal-compras-save-pdf" class="btn secondary" type="button">Salvar e gerar PDF</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="fiscal-compras-view-consulta" class="rh-view" hidden>
+                <div class="card form-card fiscal-compras-consulta-filters">
+                  <div class="fiscal-compras-consulta-row">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-ini">Período de</label>
+                      <input id="fiscal-compras-filter-ini" type="date" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-fim">Até</label>
+                      <input id="fiscal-compras-filter-fim" type="date" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-solicitante">Solicitante</label>
+                      <input id="fiscal-compras-filter-solicitante" type="text" placeholder="Ex: JOAO" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-setor">Setor</label>
+                      <input id="fiscal-compras-filter-setor" type="text" placeholder="Ex: Usinagem" />
+                    </div>
+                  </div>
+                  <div class="fiscal-compras-consulta-row">
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-numero">Número da requisição</label>
+                      <input id="fiscal-compras-filter-numero" type="text" placeholder="Ex: SC-2026-0001" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-fornecedor">Fornecedor</label>
+                      <input id="fiscal-compras-filter-fornecedor" type="text" placeholder="Ex: Metal Sul" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-item">Item (descrição)</label>
+                      <input id="fiscal-compras-filter-item" type="text" placeholder="Ex: Bucha bronze" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="fiscal-compras-filter-status">Status</label>
+                      <select id="fiscal-compras-filter-status">
+                        <option value="">Todos</option>
+                        <option value="PENDENTE">Pendente</option>
+                        <option value="APROVADA">Aprovada</option>
+                        <option value="CANCELADA">Cancelada</option>
+                      </select>
+                    </div>
+                    <div class="fiscal-compras-filter-actions">
+                      <button id="fiscal-compras-filter-clear" class="btn secondary" type="button">Limpar</button>
+                      <button id="fiscal-compras-filter-apply" class="btn primary" type="button">Aplicar</button>
+                    </div>
+                  </div>
+                </div>
+                <p id="fiscal-compras-consulta-error" class="pcp-modal-error"></p>
+                <p id="fiscal-compras-consulta-empty" class="pcp-empty-state" hidden>Nenhuma solicitação encontrada.</p>
+                <div class="table-wrapper pcp-table-wrapper">
+                  <table id="fiscal-compras-table" class="pcp-table">
+                    <thead id="fiscal-compras-table-head"></thead>
+                    <tbody id="fiscal-compras-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="panel-rh" class="panel">
+          <div class="card">
+            <div id="rh-menu-view">
+              <div class="log-header">
+                <h2>RH</h2>
+                <p>Selecione uma ferramenta para abrir.</p>
+              </div>
+              <div class="pcp-tool-grid">
+                <button id="rh-open-he" class="pcp-tool-btn" type="button">
+                  <strong>Gestão de Horas Extras (H.E)</strong>
+                  <span>Cadastro de setores e colaboradores, lançamento diário e KPIs gerenciais.</span>
+                </button>
+                <button id="rh-open-solic-he" class="pcp-tool-btn" type="button">
+                  <strong>Solicitar Horas Extras</strong>
+                  <span>Formulário de solicitação com geração automática de PDF e consulta por filtros.</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="rh-he-view" hidden>
+              <div class="log-header">
+                <h2>RH - Gestão de Horas Extras</h2>
+                <p id="rh-he-subtitle">Controle mensal por colaborador e setor.</p>
+              </div>
+               <div class="pcp-top-actions pcp-eff-toolbar">
+                 <button id="rh-he-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                 <button id="rh-he-refresh" class="btn primary" type="button">Atualizar</button>
+                 <button id="rh-he-add" class="btn secondary" type="button">Lançar H.E</button>
+                 <button id="rh-he-import" class="btn secondary" type="button">Importar dados</button>
+                 <button id="rh-he-export-excel" class="btn secondary" type="button">Exportar Excel</button>
+                 <button id="rh-he-export-pdf" class="btn secondary" type="button">Exportar PDF</button>
+                 <div class="pcp-eff-list-wrap">
+                   <label for="rh-filter-month">Mês</label>
+                   <input id="rh-filter-month" type="month" />
+                </div>
+                <div class="pcp-eff-list-wrap">
+                  <label for="rh-filter-sector">Setor</label>
+                  <select id="rh-filter-sector"></select>
+                </div>
+                <div class="pcp-eff-list-wrap">
+                  <label for="rh-filter-collab">Colaborador</label>
+                  <select id="rh-filter-collab"></select>
+                </div>
+                 <div class="pcp-eff-list-wrap">
+                   <label for="rh-filter-type">Tipo</label>
+                   <select id="rh-filter-type">
+                     <option value="">Todos</option>
+                     <option value="50%">50%</option>
+                     <option value="60%">60%</option>
+                     <option value="80%">80%</option>
+                     <option value="100%">100%</option>
+                     <option value="ponto_interno">Ponto interno</option>
+                     <option value="banco">Banco de horas</option>
+                     <option value="outro">Outro</option>
+                   </select>
+                 </div>
+               </div>
+
+              <div class="rh-subtabs" role="tablist" aria-label="Visões RH">
+                <button id="rh-subtab-dashboard" class="rh-subtab active" type="button" data-rh-view="dashboard">Dashboard H.E</button>
+                <button id="rh-subtab-atrasos" class="rh-subtab" type="button" data-rh-view="atrasos">Dashboard atrasos</button>
+                <button id="rh-subtab-registros" class="rh-subtab" type="button" data-rh-view="registros">Registros</button>
+                <button id="rh-subtab-colaboradores" class="rh-subtab" type="button" data-rh-view="colaboradores">Colaboradores</button>
+                <button id="rh-subtab-setores" class="rh-subtab" type="button" data-rh-view="setores">Setores</button>
+                <button id="rh-subtab-config" class="rh-subtab" type="button" data-rh-view="config">Acesso/Config</button>
+                <button id="rh-subtab-audit" class="rh-subtab" type="button" data-rh-view="audit">Auditoria</button>
+              </div>
+
+              <div id="rh-view-dashboard" class="rh-view"></div>
+              <div id="rh-view-atrasos" class="rh-view" hidden></div>
+              <div id="rh-view-registros" class="rh-view" hidden></div>
+              <div id="rh-view-colaboradores" class="rh-view" hidden></div>
+              <div id="rh-view-setores" class="rh-view" hidden></div>
+              <div id="rh-view-config" class="rh-view" hidden></div>
+              <div id="rh-view-audit" class="rh-view" hidden></div>
+            </div>
+
+            <div id="rh-solic-he-view" hidden>
+              <div class="log-header">
+                <h2>RH - Solicitação de Horas Extras</h2>
+                <p id="rh-solic-he-subtitle">Crie, edite e consulte solicitações com PDF automático.</p>
+              </div>
+              <div class="pcp-top-actions pcp-eff-toolbar">
+                <button id="rh-solic-he-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="rh-solic-he-refresh" class="btn primary" type="button">Atualizar</button>
+                <button id="rh-solic-he-new" class="btn secondary" type="button">Nova solicitação</button>
+              </div>
+
+              <div class="rh-subtabs" role="tablist" aria-label="Solicitações de H.E">
+                <button id="rh-solic-he-tab-form" class="rh-subtab active" type="button">Solicitar</button>
+                <button id="rh-solic-he-tab-consulta" class="rh-subtab" type="button">Consultar</button>
+              </div>
+
+              <div id="rh-solic-he-view-form" class="rh-view">
+                <div class="card form-card rh-solic-he-form">
+                  <div class="log-header" style="margin-bottom: 10px;">
+                    <h2 style="font-size: 18px; margin: 0;">Formulário de Solicitação</h2>
+                    <p style="margin: 6px 0 0;">Preencha os dados e salve para gerar o PDF automaticamente.</p>
+                  </div>
+                  <input id="rh-solic-he-id" type="hidden" />
+                  <div class="field">
+                    <label for="rh-solic-he-numero">Número do documento</label>
+                    <input id="rh-solic-he-numero" type="text" readonly placeholder="Gerado ao salvar" />
+                  </div>
+                  <div class="field">
+                    <label for="rh-solic-he-datahe">Data da Hora Extra</label>
+                    <input id="rh-solic-he-datahe" type="date" />
+                  </div>
+                  <div class="field">
+                    <label for="rh-solic-he-colab">Colaborador</label>
+                    <select id="rh-solic-he-colab"></select>
+                  </div>
+                  <div class="field">
+                    <label for="rh-solic-he-setor">Setor</label>
+                    <input id="rh-solic-he-setor" type="text" readonly placeholder="Selecionado automaticamente" />
+                  </div>
+                  <div class="field rh-solic-he-finalidade-field">
+                    <label for="rh-solic-he-finalidade">Finalidade da Hora Extra</label>
+                    <textarea id="rh-solic-he-finalidade" rows="5" placeholder="Descreva o motivo/finalidade"></textarea>
+                  </div>
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-inicio">Horário de Início</label>
+                      <input id="rh-solic-he-inicio" type="time" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-fim">Horário de Término</label>
+                      <input id="rh-solic-he-fim" type="time" />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-total">Total de horas</label>
+                      <input id="rh-solic-he-total" type="text" readonly placeholder="Calculado automaticamente" />
+                    </div>
+                  </div>
+                  <div class="inline">
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-solicitante">Solicitante</label>
+                      <input id="rh-solic-he-solicitante" type="text" readonly />
+                    </div>
+                    <div class="field" style="flex: 1;">
+                      <label for="rh-solic-he-datasolic">Data da solicitação</label>
+                      <input id="rh-solic-he-datasolic" type="text" readonly />
+                    </div>
+                  </div>
+                  <p id="rh-solic-he-error" class="pcp-modal-error"></p>
+                  <div class="pcp-modal-actions">
+                    <button id="rh-solic-he-cancel" class="btn secondary" type="button">Limpar</button>
+                    <button id="rh-solic-he-save" class="btn primary" type="button">Salvar e gerar PDF</button>
+                  </div>
+                </div>
+              </div>
+              <div id="rh-solic-he-view-consulta" class="rh-view" hidden>
+                <div class="card form-card rh-solic-he-consulta">
+                  <div class="log-header" style="margin-bottom: 10px;">
+                    <h2 style="font-size: 18px; margin: 0;">Consultar solicitações</h2>
+                    <p style="margin: 6px 0 0;">Use os filtros e visualize/edite/gerencie os PDFs.</p>
+                  </div>
+                  <div class="advanced-filter-card" style="grid-template-columns: repeat(12, minmax(0, 1fr));">
+                    <div class="field" style="grid-column: 1 / span 4;">
+                      <label for="rh-solic-he-filter-colab">Colaborador</label>
+                      <select id="rh-solic-he-filter-colab"></select>
+                    </div>
+                    <div class="field" style="grid-column: 5 / span 3;">
+                      <label for="rh-solic-he-filter-setor">Setor</label>
+                      <select id="rh-solic-he-filter-setor"></select>
+                    </div>
+                    <div class="field" style="grid-column: 8 / span 2;">
+                      <label for="rh-solic-he-filter-ini">De</label>
+                      <input id="rh-solic-he-filter-ini" type="date" />
+                    </div>
+                    <div class="field" style="grid-column: 10 / span 2;">
+                      <label for="rh-solic-he-filter-fim">Até</label>
+                      <input id="rh-solic-he-filter-fim" type="date" />
+                    </div>
+                    <div class="field" style="grid-column: 1 / span 4;">
+                      <label for="rh-solic-he-filter-solicitante">Solicitante</label>
+                      <input id="rh-solic-he-filter-solicitante" type="text" placeholder="Ex: JOAO" />
+                    </div>
+                    <div class="field" style="grid-column: 5 / span 3;">
+                      <label for="rh-solic-he-filter-doc">Número do documento</label>
+                      <input id="rh-solic-he-filter-doc" type="text" placeholder="Ex: HE-2026-0001" />
+                    </div>
+                    <div class="actions" style="grid-column: 8 / span 5; gap: 8px; justify-content: flex-end;">
+                      <button id="rh-solic-he-filter-clear" class="btn secondary" type="button">Limpar filtros</button>
+                      <button id="rh-solic-he-filter-apply" class="btn primary" type="button">Aplicar</button>
+                    </div>
+                  </div>
+                </div>
+
+                <p id="rh-solic-he-consulta-error" class="pcp-modal-error"></p>
+                <p id="rh-solic-he-consulta-empty" class="pcp-empty-state" hidden>Nenhuma solicitação encontrada.</p>
+                <div class="table-wrapper pcp-table-wrapper">
+                  <table id="rh-solic-he-table" class="pcp-table">
+                    <thead id="rh-solic-he-table-head"></thead>
+                    <tbody id="rh-solic-he-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="panel-pcp" class="panel">
+          <div class="card">
+            <div id="pcp-menu-view">
+              <div class="log-header">
+                <h2>PCP</h2>
+                <p>Selecione uma ferramenta para abrir.</p>
+              </div>
+              <div class="pcp-tool-grid">
+                <button id="pcp-open-acomp" class="pcp-tool-btn" type="button">
+                  <strong>Acompanhamento</strong>
+                  <span>Resumo de frete com drilldown por cliente, pedido e itens.</span>
+                </button>
+                <button id="pcp-open-eff" class="pcp-tool-btn" type="button">
+                  <strong>Eficiência</strong>
+                  <span>Painel visual das máquinas com metas por horário e status geral.</span>
+                </button>
+                <button id="pcp-open-dashboard" class="pcp-tool-btn" type="button">
+                  <strong>Dashboard</strong>
+                  <span>Painel diário executivo com KPIs, clientes, operadores e materiais.</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="pcp-acomp-view" hidden>
+              <div class="log-header">
+                <h2>PCP - Acompanhamento</h2>
+                <p id="pcp-subtitle">Resumo de fretes com drilldown por cliente, pedido e itens.</p>
+              </div>
+              <div class="pcp-top-actions">
+                <button id="pcp-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+              </div>
+              <div id="pcp-breadcrumb" class="pcp-breadcrumb"></div>
+              <p id="pcp-empty-state" class="pcp-empty-state">Clique em Acompanhamento para carregar o resumo.</p>
+              <div class="table-wrapper pcp-table-wrapper">
+                <table id="pcp-table" class="pcp-table">
+                  <thead id="pcp-table-head"></thead>
+                  <tbody id="pcp-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div id="pcp-eff-view" hidden>
+              <div class="log-header">
+                <h2>PCP - Eficiência</h2>
+                <p id="pcp-eff-title">Emissão de eficiência.</p>
+              </div>
+              <div class="pcp-top-actions pcp-eff-toolbar">
+                <button id="pcp-eff-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="pcp-eff-refresh" class="btn primary" type="button">Atualizar dados</button>
+                <button id="pcp-eff-export" class="btn secondary" type="button">Exportar imagem</button>
+                <div class="pcp-eff-list-wrap">
+                  <label for="pcp-eff-date">Data</label>
+                  <input id="pcp-eff-date" type="date" />
+                </div>
+              </div>
+              <div class="pcp-eff-time-wrap">
+                <span>Horário:</span>
+                <button id="pcp-eff-time-auto" class="pcp-time-chip active" type="button" data-hour-mode="auto">Dinâmico</button>
+                <button id="pcp-eff-time-10" class="pcp-time-chip" type="button" data-hour-mode="10">10:00</button>
+                <button id="pcp-eff-time-12" class="pcp-time-chip" type="button" data-hour-mode="12">12:00</button>
+                <button id="pcp-eff-time-15" class="pcp-time-chip" type="button" data-hour-mode="15">15:00</button>
+              </div>
+              <div id="pcp-eff-machine-filter" class="pcp-eff-machine-filter"></div>
+              <div id="pcp-eff-export-area">
+                <p id="pcp-eff-empty" class="pcp-empty-state">Clique em Atualizar dados para gerar o painel.</p>
+                <section id="pcp-eff-overall" class="pcp-eff-overall"></section>
+                <section id="pcp-eff-grid" class="pcp-eff-grid"></section>
+              </div>
+            </div>
+
+            <div id="pcp-dashboard-view" hidden>
+              <div class="log-header">
+                <h2>PCP - Dashboard Diário</h2>
+                <p id="pcp-dashboard-title">Visão geral de produção.</p>
+              </div>
+              <div class="pcp-top-actions pcp-eff-toolbar">
+                <button id="pcp-dashboard-back-menu" class="btn secondary" type="button">Voltar ao menu</button>
+                <button id="pcp-dashboard-refresh" class="btn primary" type="button">Atualizar dados</button>
+                <button id="pcp-dashboard-export-pdf" class="btn secondary" type="button">Exportar PDF</button>
+                <div class="pcp-eff-list-wrap">
+                  <label for="pcp-dashboard-date">Data</label>
+                  <input id="pcp-dashboard-date" type="date" />
+                </div>
+              </div>
+              <div id="pcp-dashboard-export-area" class="pcp-dashboard-export-area">
+                <header id="pcp-dashboard-pdf-header" class="pcp-dashboard-pdf-header" hidden>
+                  <img
+                    id="pcp-dashboard-pdf-logo"
+                    class="pcp-dashboard-pdf-logo"
+                    src="../../img/LogoParts.png"
+                    alt="Parts Seals"
+                  />
+                  <h2 id="pcp-dashboard-pdf-title">VISÃO GERAL - DASHBOARD</h2>
+                </header>
+                <p id="pcp-dashboard-empty" class="pcp-empty-state">Clique em Atualizar dados para gerar o dashboard.</p>
+                <section id="pcp-dashboard-overview" class="pcp-dashboard-overview"></section>
+                <section id="pcp-dashboard-charts" class="pcp-dashboard-charts"></section>
+                <section id="pcp-moldagem-section" class="pcp-moldagem-section">
+                  <div class="log-header pcp-moldagem-inline-header">
+                    <h3>MOLDAGEM</h3>
+                    <p id="pcp-moldagem-title">MOLDAGEM - VISÃO GERAL</p>
+                  </div>
+                  <p id="pcp-moldagem-empty" class="pcp-empty-state">Clique em Atualizar dados para gerar o painel de moldagem.</p>
+                  <section id="pcp-moldagem-overview" class="pcp-dashboard-overview"></section>
+                  <section id="pcp-moldagem-charts" class="pcp-dashboard-charts"></section>
+                </section>
+                <section id="pcp-cnc-section" class="pcp-moldagem-section">
+                  <div class="log-header pcp-moldagem-inline-header">
+                    <h3>USINAGEM MÁQUINAS CNC</h3>
+                    <p id="pcp-cnc-title">USINAGEM MÁQUINAS CNC</p>
+                  </div>
+                  <p id="pcp-cnc-empty" class="pcp-empty-state">Clique em Atualizar dados para gerar o painel de usinagem CNC.</p>
+                  <section id="pcp-cnc-overview" class="pcp-dashboard-overview"></section>
+                  <section id="pcp-cnc-charts" class="pcp-dashboard-charts"></section>
+                </section>
+                <section id="pcp-rnc-section" class="pcp-moldagem-section">
+                  <div class="log-header pcp-moldagem-inline-header">
+                    <h3>RELATÓRIO RNC</h3>
+                    <p id="pcp-rnc-title">RELATÓRIO RNC</p>
+                  </div>
+                  <p id="pcp-rnc-empty" class="pcp-empty-state">Sem dados de RNC para a data selecionada.</p>
+                  <section id="pcp-rnc-overview" class="pcp-dashboard-overview"></section>
+                  <section id="pcp-rnc-charts" class="pcp-dashboard-charts"></section>
+                </section>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <section id="panel-log" class="panel">
+          <div class="card">
+            <div class="log-header">
+              <h2>LOG Atualizações</h2>
+              <p>Inventário inicial das ferramentas existentes no sistema.</p>
+            </div>
+            <div id="log-updates-content" class="log-content"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <p class="footer-main">Sistema Interno - Parts Seals 2026</p>
+        <p class="footer-sub">Desenvolvido por KuruJoos</p>
+        <p id="footer-version" class="footer-version">Versão: - | Atualizado em: -</p>
+        <img class="footer-logo" src="../../img/KurujJoss Logo.png" alt="KuruJoss" />
+      </footer>
+    </div>
+
+    <div id="app-login-modal" class="pcp-modal app-login-modal" hidden>
+      <div class="pcp-modal-card app-login-card" role="dialog" aria-modal="true" aria-labelledby="app-login-title">
+        <img class="app-login-logo" src="../../img/LogoParts.png" alt="Logo Parts Seals" />
+        <h3 id="app-login-title">Acesso ao Sistema</h3>
+        <p id="app-login-subtitle">Informe seu usuário e senha para continuar.</p>
+        <div class="field">
+          <label for="app-login-username">Usuário</label>
+          <input id="app-login-username" type="text" placeholder="Ex: JOAO" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="app-login-password">Senha</label>
+          <input id="app-login-password" type="password" placeholder="Senha" autocomplete="off" />
+        </div>
+        <p id="app-login-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="app-login-config" class="btn secondary" type="button">Configuração</button>
+          <button id="app-login-fiscal-root" class="btn secondary" type="button">Caminho Fiscal</button>
+          <button id="app-login-confirm" class="btn primary" type="button">Entrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fiscal-nf-modal" class="pcp-modal" hidden>
+      <div id="fiscal-nf-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card fiscal-nf-card" role="dialog" aria-modal="true" aria-labelledby="fiscal-nf-title">
+        <h3 id="fiscal-nf-title">Cadastrar NF</h3>
+        <p>Informe a NF, o cliente e os pedidos/requisições (um por linha ou separados por vírgula).</p>
+        <div class="field">
+          <label for="fiscal-nf-number">NF</label>
+          <input id="fiscal-nf-number" type="text" placeholder="Número da NF" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="fiscal-nf-client">Cliente</label>
+          <input id="fiscal-nf-client" type="text" placeholder="Nome do cliente" autocomplete="off" />
+          <div id="fiscal-client-suggestions" class="fiscal-client-suggestions" hidden></div>
+        </div>
+        <div class="field">
+          <label for="fiscal-nf-identifiers">Pedidos / Requisições</label>
+          <textarea id="fiscal-nf-identifiers" rows="5" placeholder="Ex: 12345&#10;25477&#10;25477/1"></textarea>
+        </div>
+        <div class="field">
+          <label for="fiscal-nf-datetime">Data/Horário faturado</label>
+          <input id="fiscal-nf-datetime" type="datetime-local" />
+        </div>
+        <p id="fiscal-nf-error" class="pcp-modal-error"></p>
+        <div id="fiscal-nf-preview" class="fiscal-preview" hidden>
+          <p id="fiscal-nf-preview-title" class="fiscal-preview-title"></p>
+          <div class="table-wrapper pcp-table-wrapper">
+            <table class="pcp-table">
+              <thead id="fiscal-nf-preview-head"></thead>
+              <tbody id="fiscal-nf-preview-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="pcp-modal-actions">
+          <button id="fiscal-nf-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="fiscal-nf-search" class="btn secondary" type="button">Buscar itens</button>
+          <button id="fiscal-nf-confirm" class="btn primary" type="button" disabled>Cadastrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fiscal-edit-modal" class="pcp-modal" hidden>
+      <div id="fiscal-edit-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="fiscal-edit-title">
+        <h3 id="fiscal-edit-title">Editar NF</h3>
+        <p id="fiscal-edit-subtitle">Atualize status, rastreio e data de despache.</p>
+        <div class="field">
+          <label for="fiscal-edit-status">Status</label>
+          <select id="fiscal-edit-status">
+            <option value="Faturado">Faturado</option>
+            <option value="Despachado">Despachado</option>
+            <option value="Coletado">Coletado</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="fiscal-edit-rastreio">Rastreio</label>
+          <input id="fiscal-edit-rastreio" type="text" placeholder="Código de rastreio" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="fiscal-edit-despache">Data/Horário despache</label>
+          <input id="fiscal-edit-despache" type="datetime-local" />
+        </div>
+        <p id="fiscal-edit-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="fiscal-edit-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="fiscal-edit-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fiscal-confirm-modal" class="pcp-modal" hidden>
+      <div id="fiscal-confirm-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="fiscal-confirm-title">
+        <h3 id="fiscal-confirm-title">Confirmar Alteração</h3>
+        <p>Confirme a operação com o usuário logado.</p>
+        <p><strong id="fiscal-confirm-user-label"></strong></p>
+        <p id="fiscal-confirm-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="fiscal-confirm-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="fiscal-confirm-ok" class="btn primary" type="button">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fiscal-search-modal" class="pcp-modal" hidden>
+      <div id="fiscal-search-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="fiscal-search-title">
+        <h3 id="fiscal-search-title">Pesquisar NF</h3>
+        <p>Informe a NF, pedido ou requisição para localizar a nota.</p>
+        <div class="field">
+          <label for="fiscal-search-nf">NF</label>
+          <input id="fiscal-search-nf" type="text" placeholder="Ex: 8814 (NF) ou 18481 (Pedido) ou 25477 (Req)" autocomplete="off" />
+        </div>
+        <p id="fiscal-search-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="fiscal-search-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="fiscal-search-confirm" class="btn primary" type="button">Buscar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fiscal-delete-modal" class="pcp-modal" hidden>
+      <div id="fiscal-delete-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="fiscal-delete-title">
+        <h3 id="fiscal-delete-title">Apagar NF</h3>
+        <p id="fiscal-delete-subtitle">Informe o motivo para registrar no histórico.</p>
+        <div class="field">
+          <label for="fiscal-delete-reason">Motivo</label>
+          <textarea id="fiscal-delete-reason" rows="4" placeholder="Ex: NF lançada errada / cliente incorreto / pedidos errados"></textarea>
+        </div>
+        <p id="fiscal-delete-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="fiscal-delete-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="fiscal-delete-confirm" class="btn primary" type="button">Continuar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-sector-modal" class="pcp-modal" hidden>
+      <div id="rh-sector-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-sector-title">
+        <h3 id="rh-sector-title">Setor</h3>
+        <p id="rh-sector-subtitle">Cadastre ou edite um setor.</p>
+        <input id="rh-sector-id" type="hidden" />
+        <div class="field">
+          <label for="rh-sector-nome">Nome do setor</label>
+          <input id="rh-sector-nome" type="text" placeholder="Ex: MOLDAGEM" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-sector-gestor">Gestor responsável</label>
+          <input id="rh-sector-gestor" type="text" placeholder="Ex: JOÃO" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-sector-cc">Centro de custo (opcional)</label>
+          <input id="rh-sector-cc" type="text" placeholder="Ex: 01.02.03" autocomplete="off" />
+        </div>
+        <p id="rh-sector-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-sector-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-sector-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-collab-modal" class="pcp-modal" hidden>
+      <div id="rh-collab-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-collab-title">
+        <h3 id="rh-collab-title">Colaborador</h3>
+        <p id="rh-collab-subtitle">Cadastre ou edite um colaborador.</p>
+        <input id="rh-collab-id" type="hidden" />
+        <div class="field">
+          <label for="rh-collab-nome">Nome</label>
+          <input id="rh-collab-nome" type="text" placeholder="Ex: MARIA SILVA" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-matricula">Matrícula (opcional)</label>
+          <input id="rh-collab-matricula" type="text" placeholder="Ex: 1234" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-setor">Setor</label>
+          <select id="rh-collab-setor"></select>
+        </div>
+        <div class="field">
+          <label for="rh-collab-cargo">Cargo</label>
+          <input id="rh-collab-cargo" type="text" placeholder="Ex: OPERADOR" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-admissao">Data admissão</label>
+          <input id="rh-collab-admissao" type="date" />
+        </div>
+        <div class="field">
+          <label for="rh-collab-status">Status</label>
+          <select id="rh-collab-status">
+            <option value="ativo">Ativo</option>
+            <option value="inativo">Inativo</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-collab-limite">Limite mensal (h) (opcional)</label>
+          <input id="rh-collab-limite" type="number" step="0.25" min="0" placeholder="Vazio = limite padrão" />
+        </div>
+        <p id="rh-collab-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-collab-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-collab-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-he-modal" class="pcp-modal" hidden>
+      <div id="rh-he-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-he-title">
+        <h3 id="rh-he-title">Lançamento de Horas Extras</h3>
+        <p id="rh-he-modal-subtitle">Registre horas extras diárias por colaborador.</p>
+        <input id="rh-he-id" type="hidden" />
+        <div class="field">
+          <label for="rh-he-kind">Tipo de lançamento</label>
+          <select id="rh-he-kind">
+            <option value="he">H.E</option>
+            <option value="atraso">Atraso</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-he-colaborador">Colaborador</label>
+          <select id="rh-he-colaborador"></select>
+        </div>
+        <div class="field">
+          <label for="rh-he-data">Data</label>
+          <input id="rh-he-data" type="date" />
+        </div>
+        <div class="field">
+          <label id="rh-he-qtd-label" for="rh-he-qtd">Quantidade de horas</label>
+          <input id="rh-he-qtd" type="text" inputmode="numeric" placeholder="Ex: 1:30" />
+        </div>
+        <div id="rh-he-tipo-field" class="field">
+          <label for="rh-he-tipo">Tipo</label>
+          <select id="rh-he-tipo">
+            <option value="50%">50%</option>
+            <option value="60%">60%</option>
+            <option value="80%">80%</option>
+            <option value="100%">100%</option>
+            <option value="ponto_interno">Ponto interno</option>
+            <option value="banco">Banco de horas</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-he-obs">Observação (opcional)</label>
+          <textarea id="rh-he-obs" rows="3" placeholder="Detalhes do lançamento"></textarea>
+        </div>
+        <div id="rh-he-just-field" class="field">
+          <label for="rh-he-just">Justificativa</label>
+          <textarea id="rh-he-just" rows="3" placeholder="Obrigatória acima do limite configurado"></textarea>
+        </div>
+        <p id="rh-he-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-he-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-he-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-confirm-modal" class="pcp-modal" hidden>
+      <div id="rh-confirm-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-confirm-title">
+        <h3 id="rh-confirm-title">Confirmar operação</h3>
+        <p id="rh-confirm-message">Confirme para continuar.</p>
+        <p id="rh-confirm-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-confirm-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-confirm-ok" class="btn primary" type="button">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rh-import-modal" class="pcp-modal" hidden>
+      <div id="rh-import-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="rh-import-title">
+        <h3 id="rh-import-title">Importar dados (RH)</h3>
+        <p id="rh-import-subtitle">Importe automaticamente H.E e atrasos diários a partir de uma planilha base.</p>
+
+        <div class="field">
+          <label for="rh-import-source">Fonte</label>
+          <select id="rh-import-source">
+            <option value="ponto_interno">Ponto interno</option>
+            <option value="ponto_cartao" disabled>Ponto cartão (em breve)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="rh-import-date">Data do lançamento</label>
+          <input id="rh-import-date" type="date" />
+        </div>
+        <div class="field">
+          <label for="rh-import-file-path">Planilha base</label>
+          <div class="file-picker" id="rh-import-file-picker">
+            <input id="rh-import-file-path" type="text" placeholder="Nenhum arquivo selecionado" readonly />
+            <button id="rh-import-file-pick" class="btn secondary" type="button">Escolher</button>
+          </div>
+          <input id="rh-import-file" type="file" accept=".xlsx,.xlsm,.xls" hidden />
+          <p class="field-note">Regra (ponto interno): cada aba = um colaborador; célula <strong>S2</strong> contém a H.E do dia; célula <strong>R2</strong> contém o atraso do dia.</p>
+        </div>
+
+        <p id="rh-import-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="rh-import-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="rh-import-confirm" class="btn primary" type="button">Importar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="user-modal" class="pcp-modal" hidden>
+      <div id="user-modal-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card user-modal-card" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+        <h3 id="user-modal-title">Novo Login</h3>
+        <p>Crie um usuário e defina permissões de acesso.</p>
+        <div class="field">
+          <label for="user-username">Usuário</label>
+          <input id="user-username" type="text" placeholder="Ex: JOAO" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="user-password">Senha</label>
+          <input id="user-password" type="password" placeholder="Senha" autocomplete="off" />
+        </div>
+        <div id="user-permissions-wrap" class="user-permissions-grid"></div>
+        <p id="user-modal-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="user-modal-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="user-modal-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="user-pass-modal" class="pcp-modal" hidden>
+      <div id="user-pass-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="user-pass-title">
+        <h3 id="user-pass-title">Redefinir Senha</h3>
+        <p id="user-pass-subtitle"></p>
+        <div class="field">
+          <label for="user-pass-input">Nova senha</label>
+          <input id="user-pass-input" type="password" placeholder="Nova senha" autocomplete="off" />
+        </div>
+        <p id="user-pass-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="user-pass-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="user-pass-confirm" class="btn primary" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="admin-settings-modal" class="pcp-modal" hidden>
+      <div id="admin-settings-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="admin-settings-title">
+        <h3 id="admin-settings-title">Área Restrita</h3>
+        <p>Para alterar logins/permissões, informe a senha administrativa.</p>
+        <div class="field">
+          <label for="admin-settings-password">Senha</label>
+          <input id="admin-settings-password" type="password" placeholder="Senha administrativa" autocomplete="off" />
+        </div>
+        <p id="admin-settings-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="admin-settings-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="admin-settings-confirm" class="btn primary" type="button">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="backup-restore-modal" class="pcp-modal" hidden>
+      <div id="backup-restore-backdrop" class="pcp-modal-backdrop"></div>
+      <div class="pcp-modal-card" role="dialog" aria-modal="true" aria-labelledby="backup-restore-title">
+        <h3 id="backup-restore-title">Restaurar Backup</h3>
+        <p>Selecione o backup e confirme a senha administrativa 3 vezes para restaurar os arquivos.</p>
+        <div class="field">
+          <label for="backup-restore-select">Backup disponível</label>
+          <select id="backup-restore-select"></select>
+        </div>
+        <div class="field">
+          <label for="backup-restore-pass1">Senha admin (1/3)</label>
+          <input id="backup-restore-pass1" type="password" placeholder="Digite a senha administrativa" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="backup-restore-pass2">Senha admin (2/3)</label>
+          <input id="backup-restore-pass2" type="password" placeholder="Digite a senha administrativa" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="backup-restore-pass3">Senha admin (3/3)</label>
+          <input id="backup-restore-pass3" type="password" placeholder="Digite a senha administrativa" autocomplete="new-password" />
+        </div>
+        <p id="backup-restore-error" class="pcp-modal-error"></p>
+        <div class="pcp-modal-actions">
+          <button id="backup-restore-cancel" class="btn secondary" type="button">Cancelar</button>
+          <button id="backup-restore-confirm" class="btn danger" type="button">Restaurar backup</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
+
+
+
